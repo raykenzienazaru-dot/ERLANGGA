@@ -1,3 +1,4 @@
+/// <reference types="node" />
 /**
  * Flora AI Dashboard — BMKG Integration Unit Tests
  * Uses Node 24 native test runner with no external test dependencies.
@@ -343,14 +344,14 @@ test('11. Verify preset administrative configurations and unverified status', ()
 
   const gambir = presetsJson.find((p) => p.adm4 === '31.71.01.1001');
   assert.ok(gambir);
-  assert.strictEqual(gambir.isVerified, true);
-  assert.strictEqual(gambir.coordinates.lat, -6.1763842693);
-  assert.strictEqual(gambir.coordinates.lon, 106.8267073562);
+  assert.strictEqual(gambir!.isVerified, true);
+  assert.strictEqual(gambir!.coordinates.lat, -6.1763842693);
+  assert.strictEqual(gambir!.coordinates.lon, 106.8267073562);
 
   const kemayoran = presetsJson.find((p) => p.adm4 === '31.71.03.1001');
   assert.ok(kemayoran);
   // MANDATORY RULE: Kemayoran must be marked false until official boundary confirmation!
-  assert.strictEqual(kemayoran.isVerified, false);
+  assert.strictEqual(kemayoran!.isVerified, false);
 });
 
 test('12. Namespaced CAP/XML elements parsing (e.g. <cap:event>, <cap:polygon>)', () => {
@@ -628,4 +629,5 @@ test('19. Accurate timezone label resolution without indiscriminate WIB labeling
   assert.strictEqual(getTimezoneLabel(undefined), 'Waktu Lokal');
   assert.strictEqual(getTimezoneLabel('UTC'), 'UTC');
 });
+
 
