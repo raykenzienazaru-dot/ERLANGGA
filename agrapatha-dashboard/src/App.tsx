@@ -8,9 +8,11 @@ import {
 import { FloraSplash } from './components/FloraSplash';
 import { FloraKaggleSection } from './components/FloraKaggleSection';
 import { FloraHistoryCanvas, type TelemetryHistoryPoint } from './components/FloraHistoryCanvas';
+import { FloraBmkgCard } from './components/FloraBmkgCard';
 
 const SECTION_IDS = [
   'overview',
+  'bmkg',
   'monitoring',
   'analysis',
   'benchmarks',
@@ -56,6 +58,27 @@ function generateCanopyFrameSvg(mode: 'Healthy Forest Canopy' | 'Smoke Plume Det
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
+// Leaf component for clock to isolate 1-second interval re-renders from the dashboard tree
+const LiveClockBadge: React.FC = React.memo(() => {
+  const [clockText, setClockText] = useState(() =>
+    new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  );
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setClockText(
+        new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      );
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <span className="hidden sm:inline-block px-3 py-1.5 rounded-xl bg-white border border-[#D6DCCE] text-xs font-medium text-[#263A35] font-tabular shadow-xs">
+      {clockText}
+    </span>
+  );
+});
+
 export const App: React.FC = () => {
   // Boot splash state ('boot' shows the 3D Welcome screen just like flora-six-zeta.vercel.app)
   const [viewMode, setViewMode] = useState<'boot' | 'dashboard'>('boot');
@@ -81,6 +104,12 @@ export const App: React.FC = () => {
   const [visionProbs, setVisionProbs] = useState({ healthy: 6.4, smoke: 88.2, fire: 5.4 });
   const [isCapturing, setIsCapturing] = useState(false);
   const [lastCaptureTime, setLastCaptureTime] = useState<string>(() => new Date().toISOString());
+
+  // Memoize camera canopy SVG to avoid string building and URI encoding on each render
+  const canopyFrameSvg = useMemo(
+    () => generateCanopyFrameSvg(visionPrediction),
+    [visionPrediction]
+  );
 
   // Actuator / Rail L298N state
   const [movementStatus, setMovementStatus] = useState<
@@ -114,18 +143,16 @@ export const App: React.FC = () => {
     }, 3200);
   }, []);
 
-  // Clock state
-  const [clockText, setClockText] = useState(() =>
-    new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  );
+  // Close mobile drawer on Escape key press for keyboard accessibility (WCAG 2.1)
   useEffect(() => {
-    const timer = setInterval(() => {
-      setClockText(
-        new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-      );
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && mobileMenuOpen) {
+        setMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileMenuOpen]);
 
   // Real-time C Header AI Model 1: model_hazard.h (100-Tree Random Forest)
   const hazardResult = useMemo(
@@ -229,7 +256,7 @@ export const App: React.FC = () => {
   );
 
   // Select a preset scenario from forestfires.csv
-  const handleSelectPreset = (presetId: string) => {
+  const handleSelectPreset = useCallback((presetId: string) => {
     const found = REAL_DATASET_PRESETS.find((p) => p.id === presetId);
     if (!found) return;
     setActivePresetId(found.id);
@@ -261,10 +288,10 @@ export const App: React.FC = () => {
       found.visionPrediction
     );
     showToast(`Preset dimuat: ${found.name}`);
-  };
+  }, [appendSnapshotToHistory, showToast]);
 
   // Interactive slider change handler
-  const handleChangeParam = (
+  const handleChangeParam = useCallback((
     field: 'temp' | 'rh' | 'wind' | 'rain' | 'ffmc' | 'dmc' | 'soilMoisture',
     value: number
   ) => {
@@ -324,26 +351,41 @@ export const App: React.FC = () => {
       setVisionPrediction('Healthy Forest Canopy');
       setVisionProbs({ healthy: 93.6, smoke: 4.8, fire: 1.6 });
     }
-  };
+  }, [temp, rh, wind, rain, ffmc, dmc, soilMoisture]);
 
-  // Scroll spy for sidebar
+  // Scroll spy for sidebar with requestAnimationFrame throttling to eliminate layout thrashing
   useEffect(() => {
+    let ticking = false;
+    let rafId = 0;
     const onScroll = () => {
-      if (window.scrollY < 80) {
-        setActiveSection(SECTION_IDS[0]);
-        return;
+      if (!ticking) {
+        rafId = window.requestAnimationFrame(() => {
+          if (window.scrollY < 80) {
+            setActiveSection((prev) => (prev !== SECTION_IDS[0] ? SECTION_IDS[0] : prev));
+          } else {
+            let current = SECTION_IDS[0] as string;
+            for (const id of SECTION_IDS) {
+              const el = document.getElementById(id);
+              if (el && el.getBoundingClientRect().top <= 150) {
+                current = id;
+              }
+            }
+            setActiveSection((prev) => (prev !== current ? current : prev));
+          }
+          ticking = false;
+          rafId = 0;
+        });
+        ticking = true;
       }
-      let current = SECTION_IDS[0] as string;
-      for (const id of SECTION_IDS) {
-        const el = document.getElementById(id);
-        if (el && el.getBoundingClientRect().top <= 150) {
-          current = id;
-        }
-      }
-      setActiveSection(current);
     };
     window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+      ticking = false;
+    };
   }, []);
 
   const scrollToSection = (id: string) => {
@@ -446,49 +488,65 @@ export const App: React.FC = () => {
       severity: 'NORMAL',
       title: `Kondisi Hutan & Mikroklimat Kanopi Optimal (Low Risk: ${hazardResult.lowProbability.toFixed(1)}%)`,
       description: `Seluruh parameter telemetri berada dalam batas aman Montesinho & FLORA (FFMC: ${ffmc.toFixed(1)}, Soil: ${soilMoisture.toFixed(1)}%, Prediksi Kaggle: 'safe').`,
-      wrapper: 'bg-[#EAF4E8] border-[#C4E1BF] text-[#22531A]',
-      badge: 'bg-[#C4E1BF] text-[#22531A]',
-      btn: 'bg-[#22531A] text-white hover:bg-[#1A4014]',
+      wrapper: 'bg-[#EFF3EF] border-[#A6B49E] text-[#263A35]',
+      badge: 'bg-[#A6B49E]/30 text-[#263A35] border border-[#A6B49E]',
+      btn: 'bg-[#4E635E] text-white hover:bg-[#3D4F4B]',
       actionText: 'Lihat Telemetri',
       actionTarget: 'monitoring',
     };
   }, [hazardResult, floraResult, ffmc, dmc, soilMoisture, temp, rh]);
 
-  const navItems = [
-    { id: 'overview', label: 'Overview Status', badge: hazardResult.riskLevel },
-    { id: 'monitoring', label: 'Live Sensors (FWI & ADC)' },
-    { id: 'analysis', label: 'AI Model Analysis (.h)' },
-    { id: 'benchmarks', label: 'Simulator & Kaggle Data', badge: 'AI.H' },
-    { id: 'cameraCapture', label: 'ESP32-CAM Vision' },
-    { id: 'device-control', label: 'L298N Rail Control' },
-    { id: 'treatment', label: 'Mitigation & Irrigation' },
-    { id: 'history', label: 'Historical Trends' },
-    { id: 'devices', label: 'Hardware Topology' },
-  ];
+  const navItems = useMemo(
+    () => [
+      { id: 'overview', label: 'Overview Status', badge: hazardResult.riskLevel },
+      { id: 'bmkg', label: 'BMKG Macro Weather', badge: 'BMKG' },
+      { id: 'monitoring', label: 'Live Sensors (FWI & ADC)' },
+      { id: 'analysis', label: 'AI Model Analysis (.h)' },
+      { id: 'benchmarks', label: 'Simulator & Kaggle Data', badge: 'AI.H' },
+      { id: 'cameraCapture', label: 'ESP32-CAM Vision' },
+      { id: 'device-control', label: 'L298N Rail Control' },
+      { id: 'treatment', label: 'Mitigation & Irrigation' },
+      { id: 'history', label: 'Historical Trends' },
+      { id: 'devices', label: 'Hardware Topology' },
+    ],
+    [hazardResult.riskLevel]
+  );
 
-  const sidebarContent = (
+  const renderSidebarContent = (isMobile = false) => (
     <div className="flex flex-col justify-between h-full p-4 select-none">
-      <div>
-        {/* Brand Box */}
-        <div className="flex items-center gap-2.5 px-2 py-2.5 mb-5 border-b border-[#2C3B0E]">
-          <div className="w-8 h-8 rounded-xl bg-[#597C00] flex items-center justify-center text-white shadow-xs shrink-0">
+      {/* Brand Box */}
+      <div className="flex items-center justify-between pb-3.5 mb-3 border-b border-[#364844] shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-[#4E635E] flex items-center justify-center text-white shadow-xs shrink-0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 0 C12 7 17 12 24 12 C17 12 12 17 12 24 C12 17 7 12 0 12 C7 12 12 7 12 0 Z" />
             </svg>
           </div>
           <div className="min-w-0">
-            <span className="text-xs font-bold text-white tracking-wider uppercase block font-display">
+            <span className="text-xs font-bold text-white tracking-wider uppercase block font-display truncate">
               AGRAPATHA · FLORA
             </span>
-            <span className="text-[10px] text-[#C3D883]/80 block truncate">
+            <span className="text-[10px] text-[#E2E0CB]/85 block truncate">
               Edge AI Forest &amp; Botanical
             </span>
           </div>
         </div>
+        {isMobile && (
+          <button
+            onClick={() => setMobileMenuOpen(false)}
+            className="text-[#E2E0CB] hover:text-white w-9 h-9 flex items-center justify-center rounded-lg text-base shrink-0 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E]"
+            aria-label="Tutup navigasi"
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
+        )}
+      </div>
 
+      {/* Middle Scrollable Section */}
+      <div className="flex-1 overflow-y-auto min-h-0 flora-sidebar-scroll pr-1 space-y-5">
         {/* Navigation Links */}
-        <div className="space-y-1">
-          <span className="px-2.5 text-[10px] font-bold uppercase tracking-widest text-[#C3D883]/60 block mb-2">
+        <nav aria-label="Console Sections" className="space-y-1">
+          <span className="px-2.5 text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB]/70 block mb-2">
             Console Sections
           </span>
           {navItems.map((item) => {
@@ -497,17 +555,18 @@ export const App: React.FC = () => {
               <button
                 key={item.id}
                 onClick={() => scrollToSection(item.id)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left ${
+                aria-current={isActive ? 'location' : undefined}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
                   isActive
-                    ? 'bg-[#597C00] text-white shadow-xs'
-                    : 'text-[#F0F4E8]/80 hover:bg-[#2C3B0E]/60 hover:text-white'
+                    ? 'bg-[#4E635E] text-white shadow-xs border-l-2 border-[#E2E0CB]'
+                    : 'text-[#E2E0CB]/85 hover:bg-[#364844]/60 hover:text-white'
                 }`}
               >
                 <span className="truncate">{item.label}</span>
                 {item.badge && (
                   <span
-                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
-                      isActive ? 'bg-[#1E2805] text-[#9DB312]' : 'bg-[#141D04] text-[#C3D883]'
+                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 ml-1.5 ${
+                      isActive ? 'bg-[#23312E] text-[#E2E0CB]' : 'bg-[#1A2522] text-[#A6B49E]'
                     }`}
                   >
                     {item.badge}
@@ -516,29 +575,31 @@ export const App: React.FC = () => {
               </button>
             );
           })}
-        </div>
+        </nav>
 
         {/* Quick Dataset Presets in Sidebar */}
-        <div className="mt-6 pt-4 border-t border-[#2C3B0E]">
-          <span className="px-2.5 text-[10px] font-bold uppercase tracking-widest text-[#C3D883]/60 block mb-2">
+        <div className="pt-4 border-t border-[#364844]">
+          <span className="px-2.5 text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB]/70 block mb-2">
             Kaggle Preset Scenarios
           </span>
-          <div className="space-y-1.5">
+          <div role="group" aria-label="Kaggle Preset Scenarios" className="space-y-1.5">
             {REAL_DATASET_PRESETS.map((preset) => {
               const active = activePresetId === preset.id;
               return (
                 <button
                   key={preset.id}
                   onClick={() => handleSelectPreset(preset.id)}
-                  className={`w-full px-3 py-2 rounded-xl text-left text-[11px] transition-all cursor-pointer border ${
+                  aria-pressed={active}
+                  aria-label={`Pilih skenario preset ${preset.name}`}
+                  className={`w-full px-3 py-2 rounded-xl text-left text-[11px] transition-all cursor-pointer border focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
                     active
-                      ? 'bg-[#141D04] border-[#9DB312] text-white font-bold'
-                      : 'bg-[#141D04]/40 border-[#2C3B0E] text-[#C3D883] hover:bg-[#141D04]'
+                      ? 'bg-[#1A2522] border-[#A6B49E] text-white font-bold'
+                      : 'bg-[#1A2522]/50 border-[#364844] text-[#E2E0CB] hover:bg-[#1A2522]'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-1">
                     <span className="truncate">{preset.shortName}</span>
-                    <span className="font-tabular text-[10px] text-[#9DB312]">FFMC {preset.ffmc}</span>
+                    <span className="font-tabular text-[10px] text-[#E2E0CB] shrink-0">FFMC {preset.ffmc}</span>
                   </div>
                 </button>
               );
@@ -548,19 +609,19 @@ export const App: React.FC = () => {
       </div>
 
       {/* Bottom System Channel Status */}
-      <div className="bg-[#141D04] p-3 rounded-xl border border-[#2C3B0E] flex items-center gap-2.5 mt-4">
-        <span className="w-2 h-2 rounded-full shrink-0 bg-[#9DB312] shadow-[0_0_6px_rgba(157,179,18,0.7)] animate-pulse" />
+      <div className="bg-[#1A2522] p-3 rounded-xl border border-[#364844] flex items-center gap-2.5 mt-3 shrink-0">
+        <span className="w-2 h-2 rounded-full shrink-0 bg-[#A6B49E] shadow-[0_0_6px_rgba(166,180,158,0.7)] animate-pulse" />
         <div className="min-w-0 flex-1">
-          <span className="block text-[9px] text-[#C3D883] font-semibold uppercase tracking-wider">
+          <span className="block text-[9px] text-[#E2E0CB] font-semibold uppercase tracking-wider truncate">
             Edge Kernel Channel
           </span>
           <div className="flex items-center justify-between gap-1 mt-0.5">
             <span className="block text-xs font-bold text-white uppercase tracking-wider truncate">
               LIVE · C HEADER AI
             </span>
-            <span className="text-[10px] text-[#C3D883]/80 font-tabular shrink-0">100 Trees</span>
+            <span className="text-[10px] text-[#E2E0CB]/80 font-tabular shrink-0">100 Trees</span>
           </div>
-          <span className="block text-[10px] text-[#C3D883]/70 truncate mt-0.5">
+          <span className="block text-[10px] text-[#E2E0CB]/70 truncate mt-0.5">
             model_hazard.h + grenvis_sensor
           </span>
         </div>
@@ -569,97 +630,89 @@ export const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#F7FAF8] text-[#1B2408] flex flex-col font-sans">
+    <div className="min-h-screen bg-[#F7F8F5] text-[#263A35] flex flex-col font-sans">
       {/* 3D Boot Splash Screen */}
       {viewMode === 'boot' && <FloraSplash onComplete={() => setViewMode('dashboard')} />}
 
       <div className="flex flex-1 min-h-screen">
         {/* Desktop Sticky Sidebar */}
-        <aside className="hidden lg:flex w-[240px] h-screen sticky top-0 shrink-0 bg-[#1E2805] flex-col border-r border-[#2C3B0E] z-30 shadow-md">
-          {sidebarContent}
+        <aside className="hidden lg:flex w-64 h-screen sticky top-0 shrink-0 bg-[#23312E] flex-col border-r border-[#364844] z-30 shadow-md">
+          {renderSidebarContent(false)}
         </aside>
 
         {/* Mobile Drawer Sidebar */}
         {mobileMenuOpen && (
           <div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 lg:hidden flex"
+            id="mobile-navigation-drawer"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 lg:hidden flex"
             onClick={() => setMobileMenuOpen(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigasi AGRAPATHA Flora"
           >
             <div
-              className="w-[260px] h-full bg-[#1E2805] shadow-2xl flex flex-col z-50"
+              className="w-[280px] h-full bg-[#23312E] shadow-2xl flex flex-col z-50"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex justify-between items-center p-4 border-b border-[#2C3B0E]">
-                <span className="text-xs font-bold text-white uppercase tracking-wider font-display flex items-center gap-1.5">
-                  <span className="text-[#9DB312]">✦</span>
-                  <span>AGRAPATHA · FLORA Menu</span>
-                </span>
-                <button
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="text-[#C3D883] hover:text-white p-1 rounded-md text-sm"
-                  aria-label="Close navigation"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto">{sidebarContent}</div>
+              {renderSidebarContent(true)}
             </div>
           </div>
         )}
 
         {/* Main Console Workspace */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 max-w-[1440px] mx-auto w-full">
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-7 xl:p-8 2xl:p-9 max-w-[1440px] xl:max-w-[1560px] 2xl:max-w-[1680px] mx-auto w-full overflow-x-hidden">
           {/* Top Console Header */}
-          <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 mb-5 border-b border-[#E4EBE0]">
-            <div className="flex items-center gap-3">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-5 mb-5 border-b border-[#D6DCCE]">
+            <div className="flex items-center gap-3 min-w-0">
               <button
                 onClick={() => setMobileMenuOpen(true)}
-                className="lg:hidden p-2 rounded-xl bg-white border border-[#E4EBE0] text-[#1B2408] hover:bg-[#F4F7F2] text-lg font-bold shadow-xs cursor-pointer"
-                aria-label="Open Navigation Menu"
+                className="lg:hidden w-10 h-10 shrink-0 rounded-xl bg-white border border-[#D6DCCE] text-[#263A35] hover:bg-[#F0F2ED] text-lg font-bold shadow-xs cursor-pointer flex items-center justify-center focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+                aria-label="Buka Menu Navigasi"
+                aria-expanded={mobileMenuOpen}
+                aria-controls="mobile-navigation-drawer"
               >
-                ☰
+                <span aria-hidden="true">☰</span>
               </button>
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold tracking-widest text-[#597C00] uppercase flex items-center gap-1.5">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <span className="text-[10px] font-bold tracking-widest text-[#4E635E] uppercase flex items-center gap-1.5 truncate">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
                       <path d="M12 0 C12 7 17 12 24 12 C17 12 12 17 12 24 C12 17 7 12 0 12 C7 12 12 7 12 0 Z" />
                     </svg>
-                    <span>AGRAPATHA × FLORA · Botanical &amp; Forest Fire Intelligence</span>
+                    <span className="truncate">AGRAPATHA × FLORA · Botanical &amp; Forest Fire Intelligence</span>
                   </span>
                 </div>
-                <h1 className="text-xl sm:text-2xl font-bold text-[#1B2408] mt-0.5 tracking-tight font-display">
+                <h1 className="text-xl sm:text-2xl font-bold text-[#263A35] mt-0.5 tracking-tight font-display">
                   Forest Fire Hazard &amp; Microclimate Console
                 </h1>
-                <p className="text-xs text-[#617253] mt-0.5">
-                  Realtime FWI sensor telemetry, <code className="font-mono text-[#597C00]">model_hazard.h</code> Random Forest (100 trees), and <code className="font-mono text-[#597C00]">grenvis_sensor_model.h</code> evaluation.
+                <p className="text-xs text-[#50645F] mt-0.5 leading-relaxed">
+                  Realtime FWI sensor telemetry, <code className="font-mono text-[#4E635E]">model_hazard.h</code> Random Forest (100 trees), and <code className="font-mono text-[#4E635E]">grenvis_sensor_model.h</code> evaluation.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 self-end sm:self-auto flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-start sm:justify-end shrink-0">
               <button
                 onClick={() => setViewMode('boot')}
-                className="px-3 py-1.5 rounded-xl bg-[#EAF4E8] hover:bg-[#DDF0D9] text-[#22531A] border border-[#C4E1BF] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-xl bg-[#EFF3EF] hover:bg-[#E2E0CB] text-[#263A35] border border-[#A6B49E] text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                 title="Buka tampilan 3D Welcome Screen"
+                aria-label="Buka kembali tampilan 3D Welcome Screen"
               >
-                <span>✦</span>
+                <span aria-hidden="true">✦</span>
                 <span>3D Welcome</span>
               </button>
 
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border border-[#E4EBE0] text-xs shadow-xs">
-                <span className="w-2 h-2 rounded-full shrink-0 bg-[#597C00] animate-pulse" />
-                <span className="font-bold text-[#1B2408] font-display text-[11px] uppercase tracking-wider">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border border-[#D6DCCE] text-xs shadow-xs">
+                <span className="w-2 h-2 rounded-full shrink-0 bg-[#4E635E] animate-pulse" />
+                <span className="font-bold text-[#263A35] font-display text-[11px] uppercase tracking-wider">
                   LIVE
                 </span>
-                <span className="text-[11px] text-[#617253] font-tabular border-l border-[#E4EBE0] pl-2 hidden sm:inline-block">
+                <span className="text-[11px] text-[#50645F] font-tabular border-l border-[#D6DCCE] pl-2 hidden sm:inline-block">
                   model_hazard.h Ready
                 </span>
               </div>
 
-              <span className="hidden md:inline-block px-3 py-1.5 rounded-xl bg-white border border-[#E4EBE0] text-xs font-medium text-[#1B2408] font-tabular shadow-xs">
-                {clockText}
-              </span>
+              <LiveClockBadge />
 
               <button
                 onClick={() => {
@@ -667,9 +720,10 @@ export const App: React.FC = () => {
                   const next = REAL_DATASET_PRESETS[(idx + 1) % REAL_DATASET_PRESETS.length];
                   handleSelectPreset(next.id);
                 }}
-                className="px-3.5 py-1.5 rounded-xl bg-[#597C00] hover:bg-[#486500] text-white text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+                className="px-3.5 py-1.5 rounded-xl bg-[#4E635E] hover:bg-[#3B4D49] text-white text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95 whitespace-nowrap focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+                aria-label="Ganti ke skenario dataset Kaggle berikutnya"
               >
-                <span>↻</span>
+                <span aria-hidden="true">↻</span>
                 <span>Ganti Skenario Kaggle</span>
               </button>
             </div>
@@ -713,7 +767,8 @@ export const App: React.FC = () => {
               </div>
               <button
                 onClick={() => scrollToSection(alertBanner.actionTarget)}
-                className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 self-end sm:self-auto cursor-pointer ${alertBanner.btn}`}
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 self-end sm:self-auto cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-current ${alertBanner.btn}`}
+                aria-label={`${alertBanner.actionText}: Menuju seksi ${alertBanner.actionTarget}`}
               >
                 <span>{alertBanner.actionText}</span>
                 <span className="text-[11px]">→</span>
@@ -721,15 +776,15 @@ export const App: React.FC = () => {
             </aside>
           </div>
 
-          <div className="space-y-8">
+          <div className="space-y-8 sm:space-y-10">
             {/* 1. OVERVIEW HERO CARD (.flora-card-hero) */}
             <section
               id="overview"
-              className="flora-card-hero p-6 lg:p-7 flex flex-col justify-between gap-6 transition-all"
+              className="scroll-mt-6 sm:scroll-mt-8 flora-card-hero p-5 sm:p-6 lg:p-7 flex flex-col justify-between gap-6 transition-all"
             >
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-[#334411]">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-[#364844]">
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-[#9DB312] block">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB] block">
                     AGRAPATHA × FLORA · Montesinho FWI &amp; Microclimate Overview
                   </span>
                   <h2 className="text-xl lg:text-2xl font-bold font-display text-white tracking-tight mt-1">
@@ -737,10 +792,10 @@ export const App: React.FC = () => {
                   </h2>
                 </div>
                 <div className="flex items-center gap-2 self-start md:self-auto shrink-0 flex-wrap">
-                  <span className="text-[11px] text-[#F0F4E8]/90 font-tabular px-2.5 py-1 rounded-xl bg-[#141D04] border border-[#2C3B0E]">
+                  <span className="text-[11px] text-[#E2E0CB]/90 font-tabular px-2.5 py-1 rounded-xl bg-[#1A2522] border border-[#364844]">
                     Kaggle Label: {hazardResult.kaggleBinaryPrediction}
                   </span>
-                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-[#141D04] text-[#C3D883] border border-[#2C3B0E]">
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-[#1A2522] text-[#E2E0CB] border border-[#364844]">
                     {hazardResult.riskLevel} Priority
                   </span>
                 </div>
@@ -749,8 +804,8 @@ export const App: React.FC = () => {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                 <div className="lg:col-span-2 space-y-3.5">
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#9DB312] shadow-[0_0_6px_rgba(157,179,18,0.8)]" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-[#C3D883]">
+                    <span className="w-2 h-2 rounded-full bg-[#A6B49E] shadow-[0_0_6px_rgba(166,180,158,0.7)]" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#E2E0CB]">
                       Current Forest &amp; Botanical Status
                     </span>
                   </div>
@@ -761,42 +816,60 @@ export const App: React.FC = () => {
                       ? 'Risiko Kebakaran Menengah — Transisi Pengeringan Bahan Bakar Halus'
                       : 'Kondisi Kanopi & Serasah Hutan Stabil — Risiko Penyalaan Rendah'}
                   </h3>
-                  <p className="text-xs lg:text-sm text-[#F0F4E8]/90 leading-relaxed max-w-2xl">
-                    Berdasarkan eksekusi langsung 100 pohon keputusan pada <code className="text-[#9DB312] font-mono">model_hazard.h</code> dengan vektor input <code className="text-[#C3D883] font-mono">[{temp.toFixed(1)}°C, {rh.toFixed(0)}%, {wind.toFixed(1)} km/h, {rain.toFixed(1)} mm, FFMC {ffmc.toFixed(1)}, DMC {dmc.toFixed(1)}]</code>, probabilitas kelas adalah <strong>High {hazardResult.highProbability.toFixed(1)}%</strong>, <strong>Moderate {hazardResult.moderateProbability.toFixed(1)}%</strong>, dan <strong>Low {hazardResult.lowProbability.toFixed(1)}%</strong>.
+                  <p className="text-xs lg:text-sm text-[#E2E0CB]/90 leading-relaxed max-w-2xl">
+                    Berdasarkan eksekusi langsung 100 pohon keputusan pada <code className="text-[#A6B49E] font-mono">model_hazard.h</code> dengan vektor input <code className="text-[#E2E0CB] font-mono">[{temp.toFixed(1)}°C, {rh.toFixed(0)}%, {wind.toFixed(1)} km/h, {rain.toFixed(1)} mm, FFMC {ffmc.toFixed(1)}, DMC {dmc.toFixed(1)}]</code>, probabilitas kelas adalah <strong>High {hazardResult.highProbability.toFixed(1)}%</strong>, <strong>Moderate {hazardResult.moderateProbability.toFixed(1)}%</strong>, dan <strong>Low {hazardResult.lowProbability.toFixed(1)}%</strong>.
                   </p>
 
                   {/* Telemetry Pill Strip */}
-                  <div className="flex items-center gap-2 pt-1 flex-wrap">
-                    <div className="bg-[#141D04] border border-[#2C3B0E] px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs">
-                      <span className="text-[#C3D883] text-[11px]">Temp</span>
-                      <span className="font-bold font-tabular text-white">{temp.toFixed(1)}°C</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 sm:gap-2.5 pt-1 w-full">
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Temp</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{temp.toFixed(1)}°C</span>
                     </div>
-                    <div className="bg-[#141D04] border border-[#2C3B0E] px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs">
-                      <span className="text-[#C3D883] text-[11px]">Humidity</span>
-                      <span className="font-bold font-tabular text-white">{rh.toFixed(1)}%</span>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#0284C7] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">RH</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{rh.toFixed(1)}%</span>
                     </div>
-                    <div className="bg-[#141D04] border border-[#2C3B0E] px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs">
-                      <span className="text-[#C3D883] text-[11px]">Wind</span>
-                      <span className="font-bold font-tabular text-white">{wind.toFixed(1)} km/h</span>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#14B8A6] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Wind</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{wind.toFixed(1)} km/h</span>
                     </div>
-                    <div className="bg-[#141D04] border border-[#2C3B0E] px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs">
-                      <span className="text-[#C3D883] text-[11px]">FFMC</span>
-                      <span className="font-bold font-tabular text-[#9DB312]">{ffmc.toFixed(1)}</span>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">FFMC</span>
+                      </div>
+                      <span className="font-bold font-tabular text-[#E2E0CB] text-xs whitespace-nowrap shrink-0">{ffmc.toFixed(1)}</span>
                     </div>
-                    <div className="bg-[#141D04] border border-[#2C3B0E] px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs">
-                      <span className="text-[#C3D883] text-[11px]">DMC</span>
-                      <span className="font-bold font-tabular text-white">{dmc.toFixed(1)}</span>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#F97316] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">DMC</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{dmc.toFixed(1)}</span>
                     </div>
-                    <div className="bg-[#141D04] border border-[#2C3B0E] px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs">
-                      <span className="text-[#C3D883] text-[11px]">Soil Moisture</span>
-                      <span className="font-bold font-tabular text-white">{soilMoisture.toFixed(1)}%</span>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#84CC16] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Soil</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{soilMoisture.toFixed(1)}%</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Right Risk Index Box */}
-                <div className="bg-[#141D04] border border-[#2C3B0E] rounded-2xl p-4 sm:p-5 flex flex-col items-center justify-center text-center shadow-inner">
-                  <span className="text-[10px] text-[#C3D883] uppercase tracking-widest font-bold block mb-1">
+                <div className="bg-[#1A2522] border border-[#364844] rounded-2xl p-4 sm:p-5 flex flex-col items-center justify-center text-center shadow-inner">
+                  <span className="text-[10px] text-[#E2E0CB] uppercase tracking-widest font-bold block mb-1">
                     model_hazard.h Risk Index
                   </span>
                   <div
@@ -805,82 +878,85 @@ export const App: React.FC = () => {
                         ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
                         : hazardResult.riskLevel === 'MODERATE'
                         ? 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]'
-                        : 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
+                        : 'bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]'
                     }`}
                   >
                     {hazardResult.riskLevel} RISK
                   </div>
-                  <span className="text-[11px] text-[#C3D883]/90 font-tabular mt-0.5">
+                  <span className="text-[11px] text-[#E2E0CB]/90 font-tabular mt-0.5">
                     {hazardResult.confidence.toFixed(2)}% confidence
                   </span>
-                  <p className="text-[10px] text-[#C3D883]/70 mt-2 m-0 leading-tight">
+                  <p className="text-[10px] text-[#E2E0CB]/70 mt-2 m-0 leading-tight">
                     Evaluated via 100-Tree C Random Forest (<code className="font-mono">model_hazard.h</code>) &amp; FLORA MLP (<code className="font-mono">{floraResult.sensorRisk}</code>).
                   </p>
                 </div>
               </div>
 
               {/* 4 Bottom Pillar Boxes */}
-              <div className="pt-4 border-t border-[#334411] grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="bg-[#141D04]/80 border border-[#2C3B0E] p-3 rounded-xl">
-                  <span className="text-[10px] font-bold text-[#C3D883] uppercase tracking-wider block">
+              <div className="pt-4 border-t border-[#364844] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                  <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     1. Meteorology (Montesinho)
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
                     {temp >= 28 ? 'Hot / Dry Air' : temp <= 12 ? 'Cool Canopy' : 'Temperate Optimal'}
                   </span>
-                  <span className="text-[10px] text-[#F0F4E8]/70 block font-tabular mt-0.5">
+                  <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
                     {temp.toFixed(1)}°C · RH {rh.toFixed(0)}% · Wind {wind.toFixed(1)} km/h
                   </span>
                 </div>
-                <div className="bg-[#141D04]/80 border border-[#2C3B0E] p-3 rounded-xl">
-                  <span className="text-[10px] font-bold text-[#C3D883] uppercase tracking-wider block">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                  <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     2. FWI Fuel Codes
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
                     {ffmc >= 90 ? 'Flammable Litter' : ffmc >= 82 ? 'Moderate Drying' : 'Moist Litter'}
                   </span>
-                  <span className="text-[10px] text-[#F0F4E8]/70 block font-tabular mt-0.5">
+                  <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
                     FFMC {ffmc.toFixed(1)} · DMC {dmc.toFixed(1)} · ISI {isi.toFixed(1)}
                   </span>
                 </div>
-                <div className="bg-[#141D04]/80 border border-[#2C3B0E] p-3 rounded-xl">
-                  <span className="text-[10px] font-bold text-[#C3D883] uppercase tracking-wider block">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                  <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     3. Edge AI (model_hazard.h)
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
                     {hazardResult.riskLevel} ({hazardResult.confidence.toFixed(1)}%)
                   </span>
-                  <span className="text-[10px] text-[#F0F4E8]/70 block font-tabular mt-0.5">
+                  <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
                     Kaggle Label: {hazardResult.kaggleBinaryPrediction}
                   </span>
                 </div>
-                <div className="bg-[#141D04]/80 border border-[#2C3B0E] p-3 rounded-xl">
-                  <span className="text-[10px] font-bold text-[#C3D883] uppercase tracking-wider block">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                  <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     4. FLORA Soil &amp; Vision
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
                     Soil {soilMoisture.toFixed(1)}% ({floraResult.sensorRisk})
                   </span>
-                  <span className="text-[10px] text-[#F0F4E8]/70 block font-tabular mt-0.5">
+                  <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
                     {visionPrediction}
                   </span>
                 </div>
               </div>
             </section>
 
+            {/* BMKG Regional Macro-Weather Context */}
+            <FloraBmkgCard />
+
             {/* 2. LIVE ENVIRONMENTAL SENSORS (6-Card Grid with exact Kaggle Dataset Ranges) */}
-            <section id="monitoring" className="mt-8">
+            <section id="monitoring" className="scroll-mt-6 sm:scroll-mt-8">
               <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
                 <div>
-                  <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                  <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                     Telemetry Stream · 6 C-Model Inputs + Soil Moisture
                   </span>
-                  <h2 className="text-lg font-bold text-[#1B2408] tracking-tight font-display">
+                  <h2 className="text-lg font-bold text-[#263A35] tracking-tight font-display">
                     Live Environmental &amp; FWI Sensors
                   </h2>
                 </div>
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF4E8] border border-[#C4E1BF] text-xs font-semibold text-[#22531A]">
-                  <span className="w-2 h-2 rounded-full bg-[#367C29] animate-pulse" />
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EFF3EF] border border-[#A6B49E] text-xs font-semibold text-[#263A35]">
+                  <span className="w-2 h-2 rounded-full bg-[#4E635E] animate-pulse" />
                   <span>Calibrated to forestfires.csv (517) &amp; FLORA (9,000)</span>
                 </div>
               </div>
@@ -889,10 +965,16 @@ export const App: React.FC = () => {
                 {[
                   {
                     title: 'Air Temperature (input[0])',
+                    shortTitle: 'Air Temperature',
+                    channelTag: 'input[0] · DHT22',
                     value: temp.toFixed(1),
                     unit: '°C',
                     statusLabel: temp >= 28 ? 'HIGH TEMP' : temp <= 10 ? 'COOL' : 'OPTIMAL',
                     isWarn: temp >= 28,
+                    percent: Math.min(100, Math.max(0, (temp / 40) * 100)),
+                    minLabel: '0°C',
+                    maxLabel: '40°C',
+                    barColor: temp >= 28 ? 'bg-[#DC2626]' : temp <= 10 ? 'bg-[#0284C7]' : 'bg-[#4E635E]',
                     explanation:
                       'Suhu udara ambien kanopi hutan (DHT22). Mempengaruhi pengeringan bahan bakar halus (FFMC) dan laju transpirasi.',
                     reference: 'Montesinho: 2.2 – 33.3°C (Mean 18.89°C)',
@@ -900,10 +982,16 @@ export const App: React.FC = () => {
                   },
                   {
                     title: 'Relative Humidity (input[1])',
+                    shortTitle: 'Relative Humidity',
+                    channelTag: 'input[1] · Air RH',
                     value: rh.toFixed(1),
                     unit: '%',
                     statusLabel: rh < 35 ? 'CRITICAL DRY' : rh > 80 ? 'HUMID' : 'MODERATE',
                     isWarn: rh < 35,
+                    percent: Math.min(100, Math.max(0, rh)),
+                    minLabel: '0%',
+                    maxLabel: '100%',
+                    barColor: rh < 35 ? 'bg-[#DC2626]' : rh > 80 ? 'bg-[#0284C7]' : 'bg-[#4E635E]',
                     explanation:
                       'Kelembapan relatif udara. Nilai RH < 35% memicu penurunan drastis kadar air serasah dan meningkatkan risiko sulutan api.',
                     reference: 'Montesinho: 15 – 100% (Mean 44.29%)',
@@ -911,10 +999,16 @@ export const App: React.FC = () => {
                   },
                   {
                     title: 'Wind Speed (input[2])',
+                    shortTitle: 'Wind Speed',
+                    channelTag: 'input[2] · Wind',
                     value: wind.toFixed(1),
                     unit: 'km/h',
-                    statusLabel: wind >= 6.5 ? 'STRONG WIND' : 'MODERATE BREEZE',
+                    statusLabel: wind >= 6.5 ? 'STRONG WIND' : 'MODERATE',
                     isWarn: wind >= 6.5,
+                    percent: Math.min(100, Math.max(0, (wind / 12) * 100)),
+                    minLabel: '0 km/h',
+                    maxLabel: '12 km/h',
+                    barColor: wind >= 6.5 ? 'bg-[#DC2626]' : 'bg-[#0D9488]',
                     explanation:
                       'Kecepatan angin permukaan hutan. Mempercepat suplai oksigen pembakaran dan meningkatkan Initial Spread Index (ISI).',
                     reference: 'Montesinho: 0.4 – 9.4 km/h (Mean 4.02)',
@@ -922,10 +1016,16 @@ export const App: React.FC = () => {
                   },
                   {
                     title: 'Outside Rain (input[3])',
+                    shortTitle: 'Outside Rain',
+                    channelTag: 'input[3] · Rain',
                     value: rain.toFixed(2),
                     unit: 'mm/m²',
                     statusLabel: rain > 0 ? 'PRECIPITATION' : 'DRY (0.0 MM)',
                     isWarn: false,
+                    percent: Math.min(100, Math.max(0, (rain / 5) * 100)),
+                    minLabel: '0.0 mm',
+                    maxLabel: '5.0 mm',
+                    barColor: rain > 0 ? 'bg-[#0284C7]' : 'bg-[#94A3B8]',
                     explanation:
                       'Curah hujan luar kanopi per m². Mayoritas kejadian kebakaran pada dataset Montesinho terjadi saat rain = 0.0 mm/m².',
                     reference: 'Montesinho: 0.0 – 6.4 mm (Mean 0.02)',
@@ -933,10 +1033,16 @@ export const App: React.FC = () => {
                   },
                   {
                     title: 'Fine Fuel Moisture (input[4] · FFMC)',
+                    shortTitle: 'Fine Fuel (FFMC)',
+                    channelTag: 'input[4] · FFMC',
                     value: ffmc.toFixed(1),
                     unit: 'idx',
                     statusLabel: ffmc >= 89.5 ? 'HIGH IGNITION' : ffmc >= 82 ? 'MODERATE' : 'LOW RISK',
                     isWarn: ffmc >= 89.5,
+                    percent: Math.min(100, Math.max(0, ffmc)),
+                    minLabel: '0 idx',
+                    maxLabel: '100 idx',
+                    barColor: ffmc >= 89.5 ? 'bg-[#DC2626]' : ffmc >= 82 ? 'bg-[#D97706]' : 'bg-[#4E635E]',
                     explanation:
                       'Indeks kadar air serasah permukaan halus. Fitur paling menentukan pada pohon keputusan model_hazard.h (ambang kritis ~89.5).',
                     reference: 'Montesinho: 18.7 – 96.2 (Mean 90.64)',
@@ -944,10 +1050,16 @@ export const App: React.FC = () => {
                   },
                   {
                     title: 'Duff Moisture & Soil (input[5] · DMC)',
+                    shortTitle: 'Duff Moisture & Soil',
+                    channelTag: 'input[5] · DMC/Soil',
                     value: dmc.toFixed(1),
-                    unit: `idx · Soil ${soilMoisture.toFixed(0)}%`,
+                    unit: `idx (Soil ${soilMoisture.toFixed(0)}%)`,
                     statusLabel: dmc >= 120 || soilMoisture < 30 ? 'DROUGHT LAYER' : 'STABLE DUFF',
                     isWarn: dmc >= 120 || soilMoisture < 30,
+                    percent: Math.min(100, Math.max(0, (dmc / 250) * 100)),
+                    minLabel: '0 idx',
+                    maxLabel: '250 idx',
+                    barColor: dmc >= 120 || soilMoisture < 30 ? 'bg-[#D97706]' : 'bg-[#4E635E]',
                     explanation:
                       'Kombinasi Duff Moisture Code (lapisan organik kompak) dan kelembapan tanah kapasitif (FLORA Soil Moisture).',
                     reference: 'DMC: 1.1 – 291.3 (Mean 110.87)',
@@ -956,46 +1068,79 @@ export const App: React.FC = () => {
                 ].map((card) => (
                   <article
                     key={card.title}
-                    className="flora-card p-5 lg:p-6 flex flex-col justify-between transition-all duration-200 hover:border-[#9DB312] hover:shadow-md"
+                    className="flora-card flora-card-interactive h-full p-5 lg:p-6 flex flex-col justify-between shadow-xs hover:shadow-md transition-all duration-200"
                   >
-                    <div>
-                      <div className="flex justify-between items-center mb-3.5 gap-2">
-                        <span className="text-[11px] font-bold text-[#617253] uppercase tracking-wider">
-                          {card.title}
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 uppercase tracking-wide ${
-                            card.isWarn
-                              ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
-                              : 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
-                          }`}
-                        >
+                    <div className="flex-1 flex flex-col justify-between">
+                      <div>
+                        {/* Header: Channel tag + Status Pill */}
+                        <div className="flex justify-between items-start mb-2 gap-2 min-h-[44px]">
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-wider block font-mono truncate">
+                              {card.channelTag}
+                            </span>
+                            <h3 className="text-xs sm:text-sm font-bold text-[#263A35] font-display mt-0.5 truncate">
+                              {card.shortTitle}
+                            </h3>
+                          </div>
                           <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              card.isWarn ? 'bg-[#DC2626]' : 'bg-[#367C29]'
+                            className={`text-[10px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 uppercase tracking-wide shrink-0 whitespace-nowrap shadow-2xs ${
+                              card.isWarn
+                                ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
+                                : 'bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]'
                             }`}
-                          />
-                          {card.statusLabel}
-                        </span>
-                      </div>
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                card.isWarn ? 'bg-[#DC2626] animate-pulse' : 'bg-[#4E635E]'
+                              }`}
+                            />
+                            {card.statusLabel}
+                          </span>
+                        </div>
 
-                      <div className="my-2.5 flex items-baseline gap-1.5">
-                        <span className="text-3xl lg:text-4xl font-bold font-tabular text-[#1B2408] tracking-tight">
-                          {card.value}
-                        </span>
-                        <span className="text-sm font-semibold text-[#617253] font-display">{card.unit}</span>
-                      </div>
+                        {/* Large Value Display */}
+                        <div className="my-2 flex items-baseline gap-2 flex-wrap">
+                          <span className="text-3xl lg:text-4xl font-extrabold font-tabular text-[#263A35] tracking-tight">
+                            {card.value}
+                          </span>
+                          <span className="text-xs sm:text-sm font-bold text-[#50645F] font-display whitespace-nowrap">
+                            {card.unit}
+                          </span>
+                        </div>
 
-                      <p className="text-xs text-[#617253] leading-relaxed my-2 min-h-[38px]">
-                        {card.explanation}
-                      </p>
+                        {/* Visual Range Spectrum Gauge */}
+                        <div className="my-2.5 bg-[#F5F4EE] p-2.5 rounded-xl border border-[#E2E0CB]">
+                          <div className="flex justify-between items-center text-[10px] font-mono text-[#50645F] mb-1">
+                            <span>Range Spectrum</span>
+                            <span className="font-bold text-[#263A35]">{card.percent.toFixed(0)}% scale</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-[#E2E0CB] rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full flora-meter-bar ${card.barColor}`}
+                              style={{ width: `${card.percent}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[9px] font-mono text-[#50645F]/80 mt-1">
+                            <span>{card.minLabel}</span>
+                            <span>{card.maxLabel}</span>
+                          </div>
+                        </div>
+
+                        {/* Descriptive Context */}
+                        <p className="text-xs text-[#50645F] leading-relaxed my-2 min-h-[44px]">
+                          {card.explanation}
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="pt-3.5 border-t border-[#E4EBE0] flex justify-between items-center text-[11px] gap-2 flex-wrap">
-                      <span className="font-semibold text-[#597C00] bg-[#F4F7F2] px-2.5 py-1 rounded-lg border border-[#E4EBE0] text-[10px]">
+                    {/* Metadata Footer */}
+                    <div className="pt-3 mt-3 border-t border-[#D6DCCE] flex items-center justify-between gap-2 text-[10px] min-h-[34px]">
+                      <span className="font-semibold text-[#4E635E] bg-[#F5F4EE] px-2 py-0.5 rounded-md border border-[#E2E0CB] font-mono shrink-0 truncate max-w-[62%]">
                         {card.reference}
                       </span>
-                      <span className="font-tabular text-[10px] text-[#617253]">{card.extra}</span>
+                      <span className="font-tabular text-[#50645F] font-medium truncate text-right">
+                        {card.extra}
+                      </span>
                     </div>
                   </article>
                 ))}
@@ -1003,32 +1148,32 @@ export const App: React.FC = () => {
             </section>
 
             {/* 3. DUAL AI ANALYSIS GRID (model_hazard.h + AI Vision / FLORA Neural Network) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch" id="analysis">
+            <div className="scroll-mt-6 sm:scroll-mt-8 grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch" id="analysis">
               {/* Left: model_hazard.h Analysis Card */}
-              <section className="flora-card p-6 flex flex-col justify-between shadow-xs">
+              <section className="flora-card p-5 sm:p-6 flex flex-col justify-between shadow-xs">
                 <div>
                   <div className="flex justify-between items-start mb-4 gap-2">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                        <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                           Edge C Random Forest Engine · model_hazard.h
                         </span>
-                        <span className="text-[9px] font-semibold bg-[#EAF4E8] text-[#22531A] px-2 py-0.5 rounded-full border border-[#C4E1BF]">
+                        <span className="text-[9px] font-semibold bg-[#EFF3EF] text-[#263A35] px-2 py-0.5 rounded-full border border-[#A6B49E] shrink-0">
                           100 Trees · m2cgen
                         </span>
                       </div>
-                      <h2 className="text-base font-bold text-[#1B2408] font-display mt-0.5">
+                      <h2 className="text-base font-bold text-[#263A35] font-display mt-0.5">
                         Forest Fire Hazard &amp; FWI Risk Analysis
                       </h2>
                     </div>
 
                     <span
-                      className={`text-xs font-bold px-3 py-1 rounded-full border flex items-center gap-1.5 ${
+                      className={`text-xs font-bold px-3 py-1 rounded-full border flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
                         hazardResult.riskLevel === 'HIGH'
                           ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
                           : hazardResult.riskLevel === 'MODERATE'
                           ? 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]'
-                          : 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
+                          : 'bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]'
                       }`}
                     >
                       <span
@@ -1037,68 +1182,101 @@ export const App: React.FC = () => {
                             ? 'bg-[#DC2626]'
                             : hazardResult.riskLevel === 'MODERATE'
                             ? 'bg-[#D97706]'
-                            : 'bg-[#367C29]'
+                            : 'bg-[#4E635E]'
                         }`}
                       />
                       {hazardResult.riskLevel} RISK
                     </span>
                   </div>
 
-                  <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-4 my-2 flex items-center justify-between">
+                  <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-4 my-2 flex items-center justify-between">
                     <div>
-                      <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+                      <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                         Assessed Fire Hazard Level
                       </span>
-                      <span className="text-lg font-bold text-[#1B2408] font-display block mt-0.5">
+                      <span className="text-lg font-bold text-[#263A35] font-display block mt-0.5">
                         {hazardResult.riskLevel} Risk ({hazardResult.kaggleBinaryPrediction})
                       </span>
                     </div>
                     <div className="text-right">
-                      <span className="text-[10px] font-semibold text-[#617253] uppercase tracking-wider block">
+                      <span className="text-[10px] font-semibold text-[#50645F] uppercase tracking-wider block">
                         Model Confidence
                       </span>
-                      <span className="text-base font-bold font-tabular text-[#597C00] block mt-0.5">
+                      <span className="text-base font-bold font-tabular text-[#4E635E] block mt-0.5">
                         {hazardResult.confidence.toFixed(2)}%
                       </span>
                     </div>
                   </div>
 
                   {/* 3 Class Probabilities from model_hazard.h */}
-                  <div className="grid grid-cols-3 gap-2.5 my-3">
-                    <div className="bg-white p-3 rounded-xl border border-[#E4EBE0] shadow-xs">
-                      <span className="text-[10px] font-semibold text-[#617253] uppercase block">
-                        High Risk [0]
-                      </span>
-                      <span className="text-base font-bold font-tabular text-[#961C1C] block mt-0.5">
-                        {hazardResult.highProbability.toFixed(2)}%
-                      </span>
+                  <div className="grid grid-cols-3 gap-2 sm:gap-2.5 my-3">
+                    <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-[#D6DCCE] shadow-xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-[10px] font-semibold text-[#50645F] uppercase block truncate">
+                            High Risk [0]
+                          </span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#961C1C] shrink-0" />
+                        </div>
+                        <span className="text-sm sm:text-base font-bold font-tabular text-[#961C1C] block mt-0.5 whitespace-nowrap">
+                          {hazardResult.highProbability.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-[#E2E0CB] rounded-full overflow-hidden mt-2">
+                        <div
+                          className="h-full bg-[#961C1C] rounded-full flora-meter-bar"
+                          style={{ width: `${Math.min(100, Math.max(0, hazardResult.highProbability))}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="bg-white p-3 rounded-xl border border-[#E4EBE0] shadow-xs">
-                      <span className="text-[10px] font-semibold text-[#617253] uppercase block">
-                        Moderate [2]
-                      </span>
-                      <span className="text-base font-bold font-tabular text-[#8A570C] block mt-0.5">
-                        {hazardResult.moderateProbability.toFixed(2)}%
-                      </span>
+                    <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-[#D6DCCE] shadow-xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-[10px] font-semibold text-[#50645F] uppercase block truncate">
+                            Moderate [2]
+                          </span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#8A570C] shrink-0" />
+                        </div>
+                        <span className="text-sm sm:text-base font-bold font-tabular text-[#8A570C] block mt-0.5 whitespace-nowrap">
+                          {hazardResult.moderateProbability.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-[#E2E0CB] rounded-full overflow-hidden mt-2">
+                        <div
+                          className="h-full bg-[#8A570C] rounded-full flora-meter-bar"
+                          style={{ width: `${Math.min(100, Math.max(0, hazardResult.moderateProbability))}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="bg-white p-3 rounded-xl border border-[#E4EBE0] shadow-xs">
-                      <span className="text-[10px] font-semibold text-[#617253] uppercase block">
-                        Low Risk [1]
-                      </span>
-                      <span className="text-base font-bold font-tabular text-[#22531A] block mt-0.5">
-                        {hazardResult.lowProbability.toFixed(2)}%
-                      </span>
+                    <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-[#D6DCCE] shadow-xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-[10px] font-semibold text-[#50645F] uppercase block truncate">
+                            Low Risk [1]
+                          </span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E] shrink-0" />
+                        </div>
+                        <span className="text-sm sm:text-base font-bold font-tabular text-[#4E635E] block mt-0.5 whitespace-nowrap">
+                          {hazardResult.lowProbability.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-[#E2E0CB] rounded-full overflow-hidden mt-2">
+                        <div
+                          className="h-full bg-[#4E635E] rounded-full flora-meter-bar"
+                          style={{ width: `${Math.min(100, Math.max(0, hazardResult.lowProbability))}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mt-4 pt-3.5 border-t border-[#E4EBE0]">
-                    <h3 className="text-xs font-bold text-[#1B2408] mb-2 flex items-center gap-1.5 font-display uppercase tracking-wider">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#597C00]" />
+                  <div className="mt-4 pt-3.5 border-t border-[#D6DCCE]">
+                    <h3 className="text-xs font-bold text-[#263A35] mb-2 flex items-center gap-1.5 font-display uppercase tracking-wider">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
                       Why This Result? (Decision Tree Split Rationale)
                     </h3>
-                    <ul className="text-xs text-[#617253] space-y-1.5 pl-4 list-disc leading-relaxed">
+                    <ul className="text-xs text-[#50645F] space-y-1.5 pl-4 list-disc leading-relaxed">
                       <li>
-                        <strong>FFMC = {ffmc.toFixed(1)}</strong>{' '}
+                        <strong className="text-[#263A35]">FFMC = {ffmc.toFixed(1)}</strong>{' '}
                         {ffmc > 89.95
                           ? 'melewati ambang cabang utama pohon keputusan (> 89.95), mengindikasikan serasah sangat kering dan mudah tersulut.'
                           : ffmc >= 84.0
@@ -1106,54 +1284,59 @@ export const App: React.FC = () => {
                           : 'berada di bawah ambang penyalaan (< 84.0), menahan perambatan api.'}
                       </li>
                       <li>
-                        <strong>DMC = {dmc.toFixed(1)} &amp; Temp = {temp.toFixed(1)}°C</strong> (RH {rh.toFixed(0)}%, Wind {wind.toFixed(1)} km/h) menghasilkan Initial Spread Index <strong>ISI = {isi.toFixed(1)}</strong> dan Drought Code <strong>DC = {dc.toFixed(1)}</strong>.
+                        <strong className="text-[#263A35]">DMC = {dmc.toFixed(1)} &amp; Temp = {temp.toFixed(1)}°C</strong> (RH {rh.toFixed(0)}%, Wind {wind.toFixed(1)} km/h) menghasilkan Initial Spread Index <strong className="text-[#263A35]">ISI = {isi.toFixed(1)}</strong> dan Drought Code <strong className="text-[#263A35]">DC = {dc.toFixed(1)}</strong>.
                       </li>
                       <li>
-                        Model mikroklimat pendamping (<code className="font-mono">grenvis_sensor_model.h</code>) mengonfirmasi risiko <strong>{floraResult.sensorRisk.toUpperCase()} ({floraResult.sensorConfidence.toFixed(1)}%)</strong> pada kelembapan tanah {soilMoisture.toFixed(1)}%.
+                        Model mikroklimat pendamping (<code className="font-mono text-[#4E635E]">grenvis_sensor_model.h</code>) mengonfirmasi risiko <strong className="text-[#263A35]">{floraResult.sensorRisk.toUpperCase()} ({floraResult.sensorConfidence.toFixed(1)}%)</strong> pada kelembapan tanah {soilMoisture.toFixed(1)}%.
                       </li>
                     </ul>
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-[#E4EBE0]">
-                  <p className="text-[11px] text-[#617253] leading-relaxed m-0">
+                <div className="mt-4 pt-3 border-t border-[#D6DCCE]">
+                  <p className="text-[11px] text-[#50645F] leading-relaxed m-0">
                     Evaluasi bahaya kebakaran dieksekusi langsung dari kode C{' '}
-                    <code className="text-[#597C00] font-mono text-[10px]">model_hazard.h</code> (fitur input:{' '}
+                    <code className="text-[#4E635E] font-mono text-[10px]">model_hazard.h</code> (fitur input:{' '}
                     <code className="font-mono text-[10px]">[temp, RH, wind, rain, FFMC, DMC]</code>) yang dilatih pada dataset Montesinho Park (<code className="font-mono text-[10px]">forestfires.csv</code>).
                   </p>
                 </div>
               </section>
 
               {/* Right: AI Vision Canopy & Smoke/Fire Analysis Card */}
-              <section className="flora-card p-6 flex flex-col justify-between shadow-xs">
+              <section className="flora-card p-5 sm:p-6 lg:p-6 flex flex-col justify-between shadow-xs">
                 <div>
                   <div className="flex justify-between items-start mb-4">
                     <div>
-                      <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                      <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                         Software AI Vision Engine · ESP32-CAM Stream
                       </span>
-                      <h2 className="text-base font-bold text-[#1B2408] font-display mt-0.5">
+                      <h2 className="text-base font-bold text-[#263A35] font-display mt-0.5">
                         Optical Canopy &amp; Plume Classification
                       </h2>
                     </div>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#597C00]" />
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
                       ESP-NOW Active
                     </span>
                   </div>
 
-                  <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-4 mb-4 flex justify-between items-center">
+                  <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-4 mb-4 flex justify-between items-center">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-[#617253] tracking-wider block">
+                      <span className="text-[10px] uppercase font-bold text-[#50645F] tracking-wider block">
                         Dominant Optical Classification
                       </span>
-                      <span className="text-base font-bold text-[#1B2408] font-display block mt-0.5">
+                      <span className="text-lg font-bold text-[#263A35] font-display block mt-0.5">
                         {visionPrediction}
                       </span>
                     </div>
-                    <span className="text-[11px] font-bold text-[#597C00] bg-white px-2.5 py-1 rounded-lg border border-[#E4EBE0] shadow-xs">
-                      SVGA 800×600
-                    </span>
+                    <div className="text-right">
+                      <span className="text-[10px] font-semibold text-[#50645F] uppercase tracking-wider block">
+                        Optical Stream
+                      </span>
+                      <span className="text-base font-bold font-tabular text-[#4E635E] block mt-0.5">
+                        SVGA · 800×600
+                      </span>
+                    </div>
                   </div>
 
                   <div className="space-y-3.5 my-3">
@@ -1161,7 +1344,7 @@ export const App: React.FC = () => {
                       {
                         label: 'Healthy Forest Canopy (Normal)',
                         value: visionProbs.healthy,
-                        color: '#367C29',
+                        color: '#4E635E',
                       },
                       {
                         label: 'Smoke Plume / Haze Indication',
@@ -1175,11 +1358,11 @@ export const App: React.FC = () => {
                       },
                     ].map((bar) => (
                       <div key={bar.label}>
-                        <div className="flex justify-between text-xs font-semibold text-[#1B2408] mb-1.5">
+                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1.5">
                           <span>{bar.label}</span>
-                          <span className="font-tabular text-[#617253]">{bar.value.toFixed(1)}%</span>
+                          <span className="font-tabular text-[#50645F]">{bar.value.toFixed(1)}%</span>
                         </div>
-                        <div className="h-2.5 rounded-full bg-[#E4EBE0] overflow-hidden">
+                        <div className="h-2.5 rounded-full bg-[#E2E0CB] overflow-hidden">
                           <div
                             className="h-full rounded-full transition-all duration-500"
                             style={{ width: `${bar.value}%`, backgroundColor: bar.color }}
@@ -1189,12 +1372,12 @@ export const App: React.FC = () => {
                     ))}
                   </div>
 
-                  <div className="mt-4 pt-3.5 border-t border-[#E4EBE0] space-y-2.5">
+                  <div className="mt-4 pt-3.5 border-t border-[#D6DCCE] space-y-2.5">
                     <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#617253] block">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#50645F] block">
                         Optical Fusion Interpretation
                       </span>
-                      <p className="text-xs text-[#1B2408] font-medium mt-0.5 leading-relaxed">
+                      <p className="text-xs text-[#263A35] font-medium mt-0.5 leading-relaxed">
                         {visionPrediction === 'Active Surface Fire'
                           ? 'Kamera mendeteksi anomali termal/nyala api permukaan yang berkorelasi dengan indeks FFMC > 92 dan prediksi High Risk pada model_hazard.h.'
                           : visionPrediction === 'Smoke Plume Detected'
@@ -1203,10 +1386,10 @@ export const App: React.FC = () => {
                       </p>
                     </div>
                     <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#597C00] block">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#4E635E] block">
                         Recommended Action
                       </span>
-                      <p className="text-xs text-[#1B2408] font-medium mt-0.5 leading-relaxed">
+                      <p className="text-xs text-[#263A35] font-medium mt-0.5 leading-relaxed">
                         {visionPrediction === 'Healthy Forest Canopy'
                           ? 'Pertahankan patroli rel otomatis berkala dan pantau kelembapan serasah.'
                           : 'Arahkan carriage kamera L298N ke titik koordinat sektor dan aktifkan penyiraman/pendinginan zona penyangga.'}
@@ -1215,9 +1398,9 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-[#E4EBE0] flex flex-wrap justify-between items-center gap-2">
-                  <p className="text-[11px] text-[#617253] leading-relaxed m-0 flex-1">
-                    Inferensi visual dikombinasikan dengan skor probabilitas <code className="text-[#597C00] font-mono text-[10px]">model_hazard.h</code> untuk meminimalkan false alarm.
+                <div className="mt-4 pt-3 border-t border-[#D6DCCE] flex flex-wrap justify-between items-center gap-2">
+                  <p className="text-[11px] text-[#50645F] leading-relaxed m-0 flex-1">
+                    Inferensi visual dikombinasikan dengan skor probabilitas <code className="text-[#4E635E] font-mono text-[10px]">model_hazard.h</code> untuk meminimalkan false alarm.
                   </p>
                 </div>
               </section>
@@ -1242,65 +1425,70 @@ export const App: React.FC = () => {
             />
 
             {/* 5. CAMERA STREAM CAPTURE SECTION (#cameraCapture) */}
-            <section id="cameraCapture" className="flora-card p-6 mt-8 shadow-xs">
+            <section id="cameraCapture" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
               <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
                 <div>
-                  <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                  <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                     Camera Subsystem (Software AI Vision)
                   </span>
-                  <h2 className="text-lg font-bold text-[#1B2408] font-display mt-0.5">
+                  <h2 className="text-lg font-bold text-[#263A35] font-display mt-0.5">
                     Forest Canopy &amp; Rail Surveillance Camera Stream
                   </h2>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
                     onClick={handleTriggerCameraScan}
                     disabled={isCapturing}
-                    className="text-xs font-semibold px-3 py-1.5 rounded-full bg-[#1E2805] hover:bg-[#2C3B0E] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                    aria-busy={isCapturing}
+                    aria-label={isCapturing ? 'Sedang memproses pemindaian kamera...' : 'Ambil Foto Pemindaian Kanopi'}
+                    className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                   >
-                    <span>{isCapturing ? '⏳' : '📸'}</span>
+                    <span aria-hidden="true">{isCapturing ? '⏳' : '📸'}</span>
                     <span>{isCapturing ? 'Memproses...' : 'Ambil Foto Sekarang'}</span>
                   </button>
-                  <span className="text-xs font-semibold px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#597C00]" />
+                  <span className="text-xs font-semibold px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
                     Optical Frame Ready
                   </span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
-                <div className="lg:col-span-2 relative min-h-[320px] bg-[#F4F7F2] border border-[#E4EBE0] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center p-6">
+                <div className="lg:col-span-2 relative min-h-[340px] xl:min-h-[380px] bg-[#1A2522] border border-[#D6DCCE] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-xs">
                   <img
-                    src={generateCanopyFrameSvg(visionPrediction)}
+                    src={canopyFrameSvg}
                     alt="Forest canopy capture from ESP32-CAM"
                     className="w-full h-full object-cover absolute inset-0"
                   />
-                  <div className="absolute left-3 bottom-3 px-2.5 py-1 rounded-lg bg-[#1E2805]/90 text-[#F0F4E8] text-[10px] font-medium backdrop-blur-sm pointer-events-none border border-[#2C3B0E] z-10">
-                    ESP32-CAM Node · Rail Position {railPositionMm} mm · ESP-NOW Transport
-                  </div>
-                  <div className="absolute right-3 bottom-3 flex flex-wrap items-center justify-end gap-1.5 z-10 pointer-events-none">
-                    <span className="px-2.5 py-1 rounded-lg bg-[#1E2805]/90 text-white text-[10px] font-bold backdrop-blur-sm border border-[#2C3B0E] flex items-center gap-1.5 shadow-xs">
-                      <span className="w-2 h-2 rounded-full bg-[#4ADE80]" />
-                      Healthy: {visionProbs.healthy.toFixed(1)}%
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-[#1E2805]/90 text-white text-[10px] font-bold backdrop-blur-sm border border-[#2C3B0E] flex items-center gap-1.5 shadow-xs">
-                      <span className="w-2 h-2 rounded-full bg-[#FB923C]" />
-                      Smoke: {visionProbs.smoke.toFixed(1)}%
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-[#1E2805]/90 text-white text-[10px] font-bold backdrop-blur-sm border border-[#2C3B0E] flex items-center gap-1.5 shadow-xs">
-                      <span className="w-2 h-2 rounded-full bg-[#F87171]" />
-                      Fire: {visionProbs.fire.toFixed(1)}%
-                    </span>
+                  {/* Unified responsive camera overlay */}
+                  <div className="absolute inset-x-3 bottom-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 z-10 pointer-events-none">
+                    <div className="px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-medium backdrop-blur-sm border border-[#364844] shadow-xs max-w-full truncate">
+                      ESP32-CAM Node · Rail Position {railPositionMm} mm · ESP-NOW (Simulated Frame)
+                    </div>
+                    <div className="flex flex-wrap items-center justify-start sm:justify-end gap-1.5">
+                      <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
+                        Healthy: {visionProbs.healthy.toFixed(1)}%
+                      </span>
+                      <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#FB923C]" />
+                        Smoke: {visionProbs.smoke.toFixed(1)}%
+                      </span>
+                      <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#F87171]" />
+                        Fire: {visionProbs.fire.toFixed(1)}%
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 <div className="flex flex-col justify-between gap-3">
                   <div className="space-y-2.5">
-                    <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3.5">
-                      <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+                    <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5">
+                      <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                         Last Optical Scan Time
                       </span>
-                      <span className="text-sm font-bold text-[#1B2408] font-tabular block mt-1">
+                      <span className="text-sm font-bold text-[#263A35] font-tabular block mt-1">
                         {new Date(lastCaptureTime).toLocaleTimeString('id-ID', {
                           hour: '2-digit',
                           minute: '2-digit',
@@ -1310,72 +1498,72 @@ export const App: React.FC = () => {
                       </span>
                     </div>
 
-                    <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3.5 flex justify-between items-center">
+                    <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 flex justify-between items-center">
                       <div>
-                        <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+                        <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                           Detected Scene Pattern
                         </span>
-                        <span className="text-sm font-bold text-[#1B2408] block mt-0.5 font-display">
+                        <span className="text-sm font-bold text-[#263A35] block mt-0.5 font-display">
                           {visionPrediction}
                         </span>
                       </div>
                       <div className="text-right">
-                        <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+                        <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                           Confidence
                         </span>
-                        <span className="text-sm font-bold text-[#597C00] font-tabular block mt-0.5">
+                        <span className="text-sm font-bold text-[#4E635E] font-tabular block mt-0.5">
                           {Math.max(visionProbs.healthy, visionProbs.smoke, visionProbs.fire).toFixed(1)}%
                         </span>
                       </div>
                     </div>
 
-                    <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3.5 space-y-2.5">
+                    <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 space-y-2.5">
                       <div className="flex justify-between items-center mb-0.5">
-                        <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+                        <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                           Hasil Klasifikasi Citra Kanopi
                         </span>
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md border bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]">
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md border bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
                           Frame Teranalisis
                         </span>
                       </div>
                       <div>
-                        <div className="flex justify-between text-xs font-semibold text-[#1B2408] mb-1">
+                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
                           <span>Healthy Canopy</span>
-                          <span className="font-tabular text-[#22531A] font-bold">
+                          <span className="font-tabular text-[#4E635E] font-bold">
                             {visionProbs.healthy.toFixed(1)}%
                           </span>
                         </div>
-                        <div className="h-2 rounded-full bg-[#E4EBE0] overflow-hidden">
+                        <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
                           <div
-                            className="h-full rounded-full bg-[#367C29]"
+                            className="h-full rounded-full bg-[#4E635E] flora-meter-bar"
                             style={{ width: `${visionProbs.healthy}%` }}
                           />
                         </div>
                       </div>
                       <div>
-                        <div className="flex justify-between text-xs font-semibold text-[#1B2408] mb-1">
+                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
                           <span>Smoke Plume</span>
                           <span className="font-tabular text-[#9A3412] font-bold">
                             {visionProbs.smoke.toFixed(1)}%
                           </span>
                         </div>
-                        <div className="h-2 rounded-full bg-[#E4EBE0] overflow-hidden">
+                        <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
                           <div
-                            className="h-full rounded-full bg-[#EA580C]"
+                            className="h-full rounded-full bg-[#EA580C] flora-meter-bar"
                             style={{ width: `${visionProbs.smoke}%` }}
                           />
                         </div>
                       </div>
                       <div>
-                        <div className="flex justify-between text-xs font-semibold text-[#1B2408] mb-1">
+                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
                           <span>Surface Fire</span>
                           <span className="font-tabular text-[#7C2D12] font-bold">
                             {visionProbs.fire.toFixed(1)}%
                           </span>
                         </div>
-                        <div className="h-2 rounded-full bg-[#E4EBE0] overflow-hidden">
+                        <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
                           <div
-                            className="h-full rounded-full bg-[#B43E1F]"
+                            className="h-full rounded-full bg-[#B43E1F] flora-meter-bar"
                             style={{ width: `${visionProbs.fire}%` }}
                           />
                         </div>
@@ -1383,8 +1571,8 @@ export const App: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3 rounded-xl">
-                    <p className="text-[11px] text-[#617253] m-0 leading-relaxed">
+                  <div className="bg-[#F5F4EE] border border-[#E2E0CB] p-3 rounded-xl">
+                    <p className="text-[11px] text-[#50645F] m-0 leading-relaxed">
                       Citra kanopi hutan dan klasifikasi model AI ditransmisikan secara nirkabel untuk verifikasi visual titik panas (hotspot).
                     </p>
                   </div>
@@ -1393,18 +1581,18 @@ export const App: React.FC = () => {
             </section>
 
             {/* 6. SCANNER CARRIAGE MANUAL CONTROL (#device-control) */}
-            <section id="device-control" className="flora-card p-6 mt-8 shadow-xs">
+            <section id="device-control" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
               <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
                 <div>
-                  <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                  <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                     Actuator Subsystem · L298N Dual H-Bridge
                   </span>
-                  <h2 className="text-lg font-bold text-[#1B2408] font-display">
+                  <h2 className="text-lg font-bold text-[#263A35] font-display">
                     Scanner Carriage Manual Control ({railPositionMm} / 1200 mm)
                   </h2>
                 </div>
-                <span className="text-xs font-semibold px-3 py-1 rounded-full border bg-[#F4F7F2] text-[#597C00] border-[#E4EBE0] flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[#597C00]" />
+                <span className="text-xs font-semibold px-3 py-1 rounded-full border bg-[#EFF3EF] text-[#4E635E] border-[#A6B49E] flex items-center gap-1.5 shrink-0 whitespace-nowrap">
+                  <span className="w-2 h-2 rounded-full bg-[#4E635E]" />
                   {movementStatus === 'idle'
                     ? 'CONTROLLER READY'
                     : movementStatus.replace(/_/g, ' ').toUpperCase()}
@@ -1412,101 +1600,111 @@ export const App: React.FC = () => {
               </div>
 
               {/* Visual Rail Track Progress Bar */}
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-4 mb-4">
-                <div className="flex justify-between text-xs font-bold text-[#1B2408] mb-2 font-tabular">
-                  <span className={limitLeft ? 'text-[#DC2626]' : 'text-[#22531A]'}>
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-4 mb-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1.5 text-xs font-bold text-[#263A35] mb-2 font-tabular">
+                  <span className={limitLeft ? 'text-[#DC2626]' : 'text-[#4E635E]'}>
                     SW1 Left: {limitLeft ? 'ACTIVE (0mm)' : 'CLEAR'}
                   </span>
-                  <span className="text-[#597C00]">
+                  <span className="text-[#4E635E]">
                     Carriage Position: {railPositionMm} mm ({((railPositionMm / 1200) * 100).toFixed(0)}%)
                   </span>
-                  <span className={limitRight ? 'text-[#DC2626]' : 'text-[#22531A]'}>
+                  <span className={limitRight ? 'text-[#DC2626]' : 'text-[#4E635E]'}>
                     SW2 Right: {limitRight ? 'ACTIVE (1200mm)' : 'CLEAR'}
                   </span>
                 </div>
-                <div className="h-3 rounded-full bg-[#E4EBE0] relative overflow-hidden">
+                <div className="h-3 rounded-full bg-[#E2E0CB] relative overflow-hidden">
                   <div
-                    className="h-full bg-[#597C00] rounded-full transition-all duration-300"
+                    className="h-full bg-[#4E635E] rounded-full transition-all duration-300"
                     style={{ width: `${(railPositionMm / 1200) * 100}%` }}
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div
+                className="grid grid-cols-2 sm:grid-cols-4 gap-3"
+                role="group"
+                aria-label="Kontrol Scanner Motor Rel L298N"
+              >
                 <button
                   onClick={() => handleRailCommand('L')}
                   disabled={limitLeft}
-                  className={`py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer ${
+                  aria-disabled={limitLeft}
+                  aria-label="Gerakkan kamera rel ke kiri (L)"
+                  className={`min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                     movementStatus === 'left_command_sent'
-                      ? 'bg-[#1E2805] text-white border-[#1E2805] ring-2 ring-[#9DB312]'
-                      : 'bg-white hover:bg-[#F4F7F2] text-[#1B2408] border-[#E4EBE0]'
+                      ? 'bg-[#4E635E] text-white border-[#4E635E] ring-2 ring-[#A6B49E]'
+                      : 'bg-white hover:bg-[#F5F4EE] text-[#263A35] border-[#D6DCCE]'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  <span>◀</span>
+                  <span aria-hidden="true">◀</span>
                   <span>Move Left (L)</span>
                 </button>
 
                 <button
                   onClick={() => handleRailCommand('S')}
-                  className={`py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer ${
+                  aria-label="Hentikan darurat motor rel (S)"
+                  className={`min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#D97706] ${
                     movementStatus === 'stop_command_sent'
                       ? 'bg-[#D97706] text-white border-[#D97706]'
                       : 'bg-[#FEF7E8] hover:bg-[#FDE3B5] text-[#8A570C] border-[#FDE3B5]'
                   }`}
                 >
-                  <span>■</span>
+                  <span aria-hidden="true">■</span>
                   <span>Stop Motor (S)</span>
                 </button>
 
                 <button
                   onClick={() => handleRailCommand('R')}
                   disabled={limitRight}
-                  className={`py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer ${
+                  aria-disabled={limitRight}
+                  aria-label="Gerakkan kamera rel ke kanan (R)"
+                  className={`min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                     movementStatus === 'right_command_sent'
-                      ? 'bg-[#1E2805] text-white border-[#1E2805] ring-2 ring-[#9DB312]'
-                      : 'bg-white hover:bg-[#F4F7F2] text-[#1B2408] border-[#E4EBE0]'
+                      ? 'bg-[#4E635E] text-white border-[#4E635E] ring-2 ring-[#A6B49E]'
+                      : 'bg-white hover:bg-[#F5F4EE] text-[#263A35] border-[#D6DCCE]'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   <span>Move Right (R)</span>
-                  <span>▶</span>
+                  <span aria-hidden="true">▶</span>
                 </button>
 
                 <button
                   onClick={() => handleRailCommand('C')}
-                  className="py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs bg-[#E0F2FE] hover:bg-[#BAE6FD] text-[#075985] border-[#BAE6FD] cursor-pointer"
+                  aria-label="Trigger tangkapan foto kamera pada posisi rel (C)"
+                  className="min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs bg-[#EFF3EF] hover:bg-[#E2E0CB] text-[#263A35] border-[#A6B49E] cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                 >
-                  <span>◉</span>
+                  <span aria-hidden="true">◉</span>
                   <span>Capture Photo (C)</span>
                 </button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
-                <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3 flex items-center justify-between">
-                  <span className="text-[10px] font-semibold text-[#617253] uppercase tracking-wider">
+                <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors rounded-xl p-3 flex items-center justify-between shadow-2xs">
+                  <span className="text-[10px] font-semibold text-[#50645F] uppercase tracking-wider">
                     Command Dispatch
                   </span>
-                  <span className="text-xs font-bold text-[#1B2408] capitalize">
+                  <span className="text-xs font-bold text-[#263A35] capitalize">
                     {movementStatus.replace(/_/g, ' ')}
                   </span>
                 </div>
-                <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3 flex items-center justify-between">
-                  <span className="text-[10px] font-semibold text-[#617253] uppercase tracking-wider">
+                <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors rounded-xl p-3 flex items-center justify-between shadow-2xs">
+                  <span className="text-[10px] font-semibold text-[#50645F] uppercase tracking-wider">
                     Last Command Sent
                   </span>
-                  <span className="text-xs font-bold font-tabular text-[#1B2408]">
+                  <span className="text-xs font-bold font-tabular text-[#263A35]">
                     {lastCommand ? `Cmd '${lastCommand}'` : 'None'}
                   </span>
                 </div>
-                <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3 flex items-center justify-between">
-                  <span className="text-[10px] font-semibold text-[#617253] uppercase tracking-wider">
+                <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors rounded-xl p-3 flex items-center justify-between shadow-2xs">
+                  <span className="text-[10px] font-semibold text-[#50645F] uppercase tracking-wider">
                     Limit Switches
                   </span>
                   <div className="flex items-center gap-2 text-xs font-bold font-tabular">
-                    <span className={limitLeft ? 'text-[#DC2626]' : 'text-[#367C29]'}>
+                    <span className={limitLeft ? 'text-[#DC2626]' : 'text-[#4E635E]'}>
                       L: {limitLeft ? 'ACTIVE' : 'CLEAR'}
                     </span>
-                    <span className="text-[#617253]/40">|</span>
-                    <span className={limitRight ? 'text-[#DC2626]' : 'text-[#367C29]'}>
+                    <span className="text-[#50645F]/40">|</span>
+                    <span className={limitRight ? 'text-[#DC2626]' : 'text-[#4E635E]'}>
                       R: {limitRight ? 'ACTIVE' : 'CLEAR'}
                     </span>
                   </div>
@@ -1515,16 +1713,16 @@ export const App: React.FC = () => {
             </section>
 
             {/* 7. TREATMENT & IRRIGATION / SUPPRESSION GUIDANCE (#treatment) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch" id="treatment">
+            <div className="scroll-mt-6 sm:scroll-mt-8 grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch" id="treatment">
               {/* Left: Treatment & Action Guidance */}
-              <section className="flora-card p-6 flex flex-col justify-between shadow-xs">
+              <section className="flora-card p-5 sm:p-6 flex flex-col justify-between shadow-xs">
                 <div>
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                      <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                         Forestry &amp; Agronomic Decision Support
                       </span>
-                      <h2 className="text-base font-bold text-[#1B2408] font-display">
+                      <h2 className="text-base font-bold text-[#263A35] font-display">
                         Mitigation &amp; Action Guidance (SOP)
                       </h2>
                     </div>
@@ -1534,18 +1732,18 @@ export const App: React.FC = () => {
                           ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
                           : hazardResult.riskLevel === 'MODERATE'
                           ? 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]'
-                          : 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
+                          : 'bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]'
                       }`}
                     >
                       {hazardResult.riskLevel} Priority
                     </span>
                   </div>
 
-                  <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-4 my-3">
-                    <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-wider block mb-1">
+                  <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-4 my-3">
+                    <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-wider block mb-1">
                       Current Assessment
                     </span>
-                    <p className="text-xs text-[#1B2408] leading-relaxed font-medium m-0">
+                    <p className="text-xs text-[#263A35] leading-relaxed font-medium m-0">
                       {hazardResult.riskLevel === 'HIGH'
                         ? `Indeks FFMC (${ffmc.toFixed(1)}) dan DMC (${dmc.toFixed(1)}) mengindikasikan bahaya kebakaran tinggi (${hazardResult.confidence.toFixed(1)}%). Lakukan pendinginan serasah dan verifikasi kamera.`
                         : hazardResult.riskLevel === 'MODERATE'
@@ -1555,10 +1753,10 @@ export const App: React.FC = () => {
                   </div>
 
                   <div className="my-3">
-                    <span className="text-xs font-bold text-[#1B2408] block mb-2 font-display uppercase tracking-wider">
+                    <span className="text-xs font-bold text-[#263A35] block mb-2 font-display uppercase tracking-wider">
                       Recommended Action Checklist:
                     </span>
-                    <ul className="text-xs text-[#1B2408] space-y-2 pl-4 list-disc font-medium">
+                    <ul className="text-xs text-[#263A35] space-y-2 pl-4 list-disc font-medium">
                       {ffmc >= 89.5 && (
                         <li className="leading-relaxed">
                           <strong>FFMC Kritis ({ffmc.toFixed(1)} ≥ 89.5):</strong> Aktifkan penyiraman kabut (misting) pada zona penyangga untuk menurunkan keterbakaran serasah permukaan.
@@ -1581,56 +1779,56 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-[#E4EBE0]">
-                  <p className="text-[11px] text-[#617253] leading-relaxed m-0">
-                    Rekomendasi disusun otomatis berdasarkan output <code className="font-mono text-[#597C00]">model_hazard.h</code> dan <code className="font-mono text-[#597C00]">grenvis_sensor_model.h</code>.
+                <div className="mt-4 pt-3 border-t border-[#D6DCCE]">
+                  <p className="text-[11px] text-[#50645F] leading-relaxed m-0">
+                    Rekomendasi disusun otomatis berdasarkan output <code className="font-mono text-[#4E635E]">model_hazard.h</code> dan <code className="font-mono text-[#4E635E]">grenvis_sensor_model.h</code>.
                   </p>
                 </div>
               </section>
 
               {/* Right: Irrigation & Canopy Cooling Log */}
-              <section className="flora-card p-6 flex flex-col justify-between shadow-xs">
+              <section className="flora-card p-5 sm:p-6 flex flex-col justify-between shadow-xs">
                 <div>
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                      <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                         Irrigation &amp; Litter Wetting
                       </span>
-                      <span className="text-[11px] font-tabular text-[#617253]">
-                        Soil moisture: <strong className="text-[#1B2408]">{soilMoisture.toFixed(0)}%</strong> · FFMC:{' '}
-                        <strong className="text-[#1B2408]">{ffmc.toFixed(1)}</strong>
+                      <span className="text-[11px] font-tabular text-[#50645F]">
+                        Soil moisture: <strong className="text-[#263A35]">{soilMoisture.toFixed(0)}%</strong> · FFMC:{' '}
+                        <strong className="text-[#263A35]">{ffmc.toFixed(1)}</strong>
                       </span>
                     </div>
-                    <h2 className="text-lg sm:text-xl font-bold text-[#1B2408] font-display">
+                    <h2 className="text-lg sm:text-xl font-bold text-[#263A35] font-display">
                       {soilMoisture < 30 || ffmc >= 90
                         ? 'Attention Needed: Wetting Recommended'
                         : 'Soil & Fuel Moisture Sufficient'}
                     </h2>
-                    <p className="text-xs text-[#617253] mt-1 leading-relaxed m-0">
+                    <p className="text-xs text-[#50645F] mt-1 leading-relaxed m-0">
                       Catat tindakan penyiraman atau pendinginan serasah untuk memperbarui riwayat hidrasi dan menurunkan indeks FFMC secara simulasi.
                     </p>
                   </div>
 
                   {wateringEvents[0] && (
-                    <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3.5 my-3.5">
+                    <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 my-3.5">
                       <div className="flex items-center justify-between text-xs mb-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#617253]">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#50645F]">
                           Last Recorded Wetting Event
                         </span>
-                        <span className="text-[10px] font-semibold text-[#22531A] bg-[#EAF4E8] px-2 py-0.5 rounded-md border border-[#C4E1BF]">
+                        <span className="text-[10px] font-semibold text-[#263A35] bg-[#EFF3EF] px-2 py-0.5 rounded-md border border-[#A6B49E]">
                           Recorded
                         </span>
                       </div>
-                      <div className="text-sm font-bold font-display text-[#1B2408]">
+                      <div className="text-sm font-bold font-display text-[#263A35]">
                         {new Date(wateringEvents[0].timestamp).toLocaleTimeString('id-ID', {
                           hour: '2-digit',
                           minute: '2-digit',
                           second: '2-digit',
                         })}
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] text-[#617253] mt-1 font-tabular">
+                      <div className="flex items-center gap-2 text-[11px] text-[#50645F] mt-1 font-tabular">
                         <span>Soil Before: {wateringEvents[0].soilBefore.toFixed(1)}%</span>
-                        <span className="text-[#617253]/40">·</span>
+                        <span className="text-[#50645F]/40">·</span>
                         <span className="truncate">{wateringEvents[0].note}</span>
                       </div>
                     </div>
@@ -1638,14 +1836,15 @@ export const App: React.FC = () => {
 
                   <button
                     onClick={handleRecordWatering}
-                    className="w-full py-2.5 px-4 rounded-xl bg-[#597C00] hover:bg-[#486500] text-white font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 mt-2"
+                    aria-label="Catat tindakan penyiraman dan pendinginan kanopi hutan"
+                    className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#4E635E] hover:bg-[#3B4D49] text-white font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 mt-2 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                   >
                     + Catat Penyiraman &amp; Pendinginan Kanopi
                   </button>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-[#E4EBE0] text-[11px] text-[#617253]">
-                  Total kejadian penyiraman tercatat sesi ini: <strong className="text-[#1B2408]">{wateringEvents.length}</strong>
+                <div className="mt-4 pt-3 border-t border-[#D6DCCE] text-[11px] text-[#50645F]">
+                  Total kejadian penyiraman tercatat sesi ini: <strong className="text-[#263A35]">{wateringEvents.length}</strong>
                 </div>
               </section>
             </div>
@@ -1654,22 +1853,22 @@ export const App: React.FC = () => {
             <FloraHistoryCanvas history={history} />
 
             {/* 9. SYSTEM & HARDWARE HEALTH TOPOLOGY (#devices) */}
-            <section id="devices" className="mt-8">
+            <section id="devices" className="scroll-mt-6 sm:scroll-mt-8">
               <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
                 <div>
-                  <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                  <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                     Infrastructure Status
                   </span>
-                  <h2 className="text-lg font-bold text-[#1B2408] font-display">
+                  <h2 className="text-lg font-bold text-[#263A35] font-display">
                     System &amp; Hardware Health Topology
                   </h2>
                 </div>
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]">
-                  Telemetry Stream Active
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
+                  Telemetry Stream (Preset Nodes)
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 lg:gap-4">
                 {[
                   { label: 'ESP32 Main Node', status: 'CONNECTED', detail: 'MAC: 8C:AA:B5:37:71:18' },
                   { label: 'ESP32-CAM Node', status: 'CONNECTED', detail: 'MAC: F8:B3:B7:A6:F3:9C' },
@@ -1680,15 +1879,18 @@ export const App: React.FC = () => {
                   { label: 'FWI & DHT22 Array', status: 'STREAMING', detail: 'Temp, RH, Wind, Rain, FFMC, DMC' },
                   { label: 'Scanner Motor L298N', status: 'READY', detail: `Carriage @ ${railPositionMm} mm` },
                 ].map((dev) => (
-                  <article key={dev.label} className="flora-card p-4 shadow-xs">
+                  <article key={dev.label} className="flora-card flora-card-interactive p-4 shadow-xs flex flex-col justify-between min-h-[96px]">
                     <div className="flex justify-between items-center mb-1">
-                      <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider">
+                      <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider">
                         {dev.label}
                       </span>
-                      <span className="w-2 h-2 rounded-full bg-[#367C29]" />
+                      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#EFF3EF] text-[#263A35] text-[9px] font-bold border border-[#A6B49E]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E] animate-pulse" />
+                        {dev.status}
+                      </span>
                     </div>
-                    <span className="text-sm font-bold text-[#1B2408] block font-display">{dev.status}</span>
-                    <span className="text-[11px] font-mono text-[#617253] block mt-1 truncate">
+                    <span className="text-xs font-bold text-[#263A35] block font-display mt-0.5">{dev.label}</span>
+                    <span className="text-[10px] font-mono text-[#50645F] block mt-1 truncate">
                       {dev.detail}
                     </span>
                   </article>
@@ -1697,10 +1899,10 @@ export const App: React.FC = () => {
             </section>
 
             {/* 10. FOOTER */}
-            <footer className="mt-12 py-8 border-t border-[#E4EBE0] text-center text-xs text-[#617253]">
+            <footer className="mt-12 py-8 border-t border-[#D6DCCE] text-center text-xs text-[#50645F]">
               <div className="flex items-center justify-center gap-2 mb-1.5 flex-wrap">
-                <span className="font-bold text-[#1B2408] font-display flex items-center gap-1.5">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="#597C00">
+                <span className="font-bold text-[#263A35] font-display flex items-center gap-1.5">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="#4E635E">
                     <path d="M12 0 C12 7 17 12 24 12 C17 12 12 17 12 24 C12 17 7 12 0 12 C7 12 12 7 12 0 Z" />
                   </svg>
                   <span>AGRAPATHA × FLORA</span>
@@ -1708,11 +1910,11 @@ export const App: React.FC = () => {
                 <span>·</span>
                 <span>Smart Forest Fire &amp; Botanical AI Vision</span>
                 <span>·</span>
-                <span className="text-[#597C00] font-semibold">
+                <span className="text-[#4E635E] font-semibold">
                   model_hazard.h (517 Montesinho) &amp; grenvis_sensor_model.h (9,000 FLORA)
                 </span>
               </div>
-              <p className="text-[11px] text-[#617253]/80 max-w-xl mx-auto leading-relaxed m-0">
+              <p className="text-[11px] text-[#50645F]/80 max-w-xl mx-auto leading-relaxed m-0">
                 Hasil analisis model C header edge (<code className="font-mono">model_hazard.h</code> &amp;{' '}
                 <code className="font-mono">grenvis_sensor_model.h</code>) dan inferensi optik berfungsi sebagai sistem pendukung keputusan (decision support) peringatan dini kebakaran hutan dan kesehatan mikroklimat.
               </p>

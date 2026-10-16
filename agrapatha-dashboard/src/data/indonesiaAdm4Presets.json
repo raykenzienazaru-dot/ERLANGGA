@@ -1,0 +1,30 @@
+[
+  {
+    "adm4": "31.71.01.1001",
+    "desa": "Gambir",
+    "kecamatan": "Gambir",
+    "kotkab": "Kota Adm. Jakarta Pusat",
+    "provinsi": "DKI Jakarta",
+    "timezone": "Asia/Jakarta",
+    "coordinates": {
+      "lat": -6.1763842693,
+      "lon": 106.8267073562
+    },
+    "isVerified": true,
+    "notes": "Verified primary reference fixture in official BMKG repository (infoBMKG/data-cuaca)"
+  },
+  {
+    "adm4": "31.71.03.1001",
+    "desa": "Kemayoran",
+    "kecamatan": "Kemayoran",
+    "kotkab": "Kota Adm. Jakarta Pusat",
+    "provinsi": "DKI Jakarta",
+    "timezone": "Asia/Jakarta",
+    "coordinates": {
+      "lat": -6.1601,
+      "lon": 106.8524
+    },
+    "isVerified": false,
+    "notes": "Unverified coordinates pending official administrative boundary confirmation (Pusat Meteorologi Publik BMKG reference)"
+  }
+]

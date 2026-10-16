@@ -8,7 +8,21 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
+  server: {
+    proxy: {
+      '/api/bmkg/forecast': {
+        target: 'https://api.bmkg.go.id',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/bmkg\/forecast/, '/publik/prakiraan-cuaca'),
+      },
+      '/api/bmkg/nowcast': {
+        target: 'https://www.bmkg.go.id',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/bmkg\/nowcast/, '/alerts/nowcast'),
+      },
     },
   },
 })

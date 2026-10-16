@@ -1,0 +1,15 @@
+{
+  "name": "agrapatha-bmkg-gateway",
+  "version": "1.0.0",
+  "description": "Production-conscious, zero-dependency BMKG Regional Weather Gateway for Agrapatha",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types src/index.ts",
+    "test": "node --experimental-strip-types --test tests/gateway.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "~6.0.2"
+  }
+}

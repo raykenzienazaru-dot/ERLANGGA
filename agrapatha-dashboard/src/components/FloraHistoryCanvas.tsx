@@ -30,7 +30,7 @@ function formatTimeShort(iso: string): string {
   }
 }
 
-export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history }) => {
+export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = React.memo(({ history }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [timeRange, setTimeRange] = useState<'LIVE' | '1H' | '6H' | '24H'>('24H');
   const [channelFilter, setChannelFilter] = useState<'ALL' | 'TEMP' | 'HUM' | 'FFMC' | 'SOIL'>('ALL');
@@ -39,6 +39,9 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
     y: number;
     record: TelemetryHistoryPoint;
   } | null>(null);
+
+  // Isolate crosshair X from tooltip Y to prevent canvas redraws on vertical cursor movement
+  const hoverX = hoverInfo ? hoverInfo.x : null;
 
   const visiblePoints = React.useMemo(() => {
     if (!history || history.length === 0) return [];
@@ -54,7 +57,7 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     const w = rect.width;
-    const h = 260;
+    const h = rect.height || 280;
     if (w === 0) return;
 
     canvas.width = w * dpr;
@@ -71,7 +74,7 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
     const plotH = h - padT - padB;
 
     ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = '#EEF2EA';
+    ctx.strokeStyle = '#D6DCCE';
     ctx.lineWidth = 1;
 
     for (let i = 0; i <= 4; i++) {
@@ -81,7 +84,7 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
       ctx.lineTo(w - padR, y);
       ctx.stroke();
 
-      ctx.fillStyle = '#617253';
+      ctx.fillStyle = '#50645F';
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.textAlign = 'right';
       ctx.fillText(`${100 - i * 25}%`, padL - 8, y + 3.5);
@@ -92,7 +95,7 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
     }
 
     if (!visiblePoints || visiblePoints.length === 0) {
-      ctx.fillStyle = '#617253';
+      ctx.fillStyle = '#50645F';
       ctx.font = '12px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('Menunggu rekaman telemetri riwayat sensor...', w / 2, h / 2);
@@ -114,7 +117,7 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
       },
       {
         field: 'soil_moisture' as const,
-        color: '#597C00',
+        color: '#4E635E',
         show: channelFilter === 'ALL' || channelFilter === 'SOIL',
         scaleMax: 100,
       },
@@ -146,7 +149,7 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
     });
 
     if (visiblePoints.length >= 2) {
-      ctx.fillStyle = '#617253';
+      ctx.fillStyle = '#50645F';
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.textAlign = 'left';
       ctx.fillText(formatTimeShort(visiblePoints[0].timestamp), padL, h - 8);
@@ -159,24 +162,45 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
       ctx.fillText(formatTimeShort(visiblePoints[visiblePoints.length - 1].timestamp), w - padR, h - 8);
     }
 
-    if (hoverInfo) {
-      ctx.strokeStyle = '#597C00';
+    if (hoverX !== null) {
+      ctx.strokeStyle = '#4E635E';
       ctx.lineWidth = 1;
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
-      ctx.moveTo(hoverInfo.x, padT);
-      ctx.lineTo(hoverInfo.x, padT + plotH);
+      ctx.moveTo(hoverX, padT);
+      ctx.lineTo(hoverX, padT + plotH);
       ctx.stroke();
       ctx.setLineDash([]);
     }
-  }, [visiblePoints, hoverInfo, channelFilter]);
+  }, [visiblePoints, hoverX, channelFilter]);
 
+  const drawChartRef = useRef(drawChart);
+  drawChartRef.current = drawChart;
+
+  // Render chart on canvas via RAF when dependencies update
   useEffect(() => {
-    drawChart();
-    const onResize = () => drawChart();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    const animId = requestAnimationFrame(() => {
+      drawChart();
+    });
+    return () => cancelAnimationFrame(animId);
   }, [drawChart]);
+
+  // Window resize handler: bound only once on mount, debounced with RAF
+  useEffect(() => {
+    let animId = 0;
+    const onResize = () => {
+      setHoverInfo(null);
+      cancelAnimationFrame(animId);
+      animId = requestAnimationFrame(() => {
+        drawChartRef.current();
+      });
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animId);
+    };
+  }, []);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -189,105 +213,128 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
     const idx = Math.round((clampedX / plotW) * (visiblePoints.length - 1));
     const rec = visiblePoints[idx];
     if (rec) {
-      setHoverInfo({
-        x: padL + (plotW * idx) / Math.max(1, visiblePoints.length - 1),
-        y: e.clientY - rect.top,
-        record: rec,
+      const newX = padL + (plotW * idx) / Math.max(1, visiblePoints.length - 1);
+      const newY = e.clientY - rect.top;
+      setHoverInfo((prev) => {
+        if (prev && prev.record === rec && Math.abs(prev.y - newY) < 3) {
+          return prev;
+        }
+        return { x: newX, y: newY, record: rec };
       });
     }
   };
 
-  // Compute summary stats
-  const avgTemp =
-    visiblePoints.reduce((acc, r) => acc + r.temperature, 0) / Math.max(1, visiblePoints.length);
-  const avgHum =
-    visiblePoints.reduce((acc, r) => acc + r.humidity, 0) / Math.max(1, visiblePoints.length);
-  const avgFfmc =
-    visiblePoints.reduce((acc, r) => acc + r.ffmc, 0) / Math.max(1, visiblePoints.length);
-  const avgSoil =
-    visiblePoints.reduce((acc, r) => acc + r.soil_moisture, 0) / Math.max(1, visiblePoints.length);
-  const latestRec = visiblePoints[visiblePoints.length - 1];
+  // Compute summary stats with useMemo so they are NOT recalculated on every mouse move
+  const { avgTemp, avgHum, avgFfmc, avgSoil, latestRec } = React.useMemo(() => {
+    const len = Math.max(1, visiblePoints.length);
+    const aTemp = visiblePoints.reduce((acc, r) => acc + r.temperature, 0) / len;
+    const aHum = visiblePoints.reduce((acc, r) => acc + r.humidity, 0) / len;
+    const aFfmc = visiblePoints.reduce((acc, r) => acc + r.ffmc, 0) / len;
+    const aSoil = visiblePoints.reduce((acc, r) => acc + r.soil_moisture, 0) / len;
+    const lRec = visiblePoints[visiblePoints.length - 1];
+    return { avgTemp: aTemp, avgHum: aHum, avgFfmc: aFfmc, avgSoil: aSoil, latestRec: lRec };
+  }, [visiblePoints]);
 
   return (
     <>
-      <section id="history" className="flora-card p-6 mt-8 shadow-xs">
+      <section id="history" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 mb-4">
           <div>
-            <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+            <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
               Telemetry Archive
             </span>
-            <h2 className="text-lg font-bold text-[#1B2408] font-display mt-0.5">
+            <h2 className="text-lg font-bold text-[#263A35] font-display mt-0.5">
               Multi-Sensor &amp; FWI Historical Trends
             </h2>
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
-            <div className="flex rounded-xl bg-[#F4F7F2] p-1 border border-[#E4EBE0] text-xs font-semibold">
+            <div
+              className="flex rounded-xl bg-[#F5F4EE] p-1 border border-[#E2E0CB] text-xs font-semibold"
+              role="group"
+              aria-label="Filter Channel Metrik Grafik Telemetri"
+            >
               <button
                 onClick={() => setChannelFilter('ALL')}
-                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                aria-pressed={channelFilter === 'ALL'}
+                aria-label="Tampilkan semua channel metrik (All)"
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                   channelFilter === 'ALL'
-                    ? 'bg-white text-[#1B2408] shadow-xs font-bold'
-                    : 'text-[#617253] hover:text-[#1B2408]'
+                    ? 'bg-white text-[#263A35] shadow-xs font-bold'
+                    : 'text-[#50645F] hover:text-[#263A35]'
                 }`}
               >
                 All
               </button>
               <button
                 onClick={() => setChannelFilter('TEMP')}
-                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                aria-pressed={channelFilter === 'TEMP'}
+                aria-label="Filter channel Temperatur (°C)"
+                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#D97706] ${
                   channelFilter === 'TEMP'
                     ? 'bg-white text-[#D97706] shadow-xs font-bold'
-                    : 'text-[#617253] hover:text-[#D97706]'
+                    : 'text-[#50645F] hover:text-[#D97706]'
                 }`}
               >
-                <span className="w-2 h-2 rounded-full bg-[#D97706]" />
+                <span className="w-2 h-2 rounded-full bg-[#D97706]" aria-hidden="true" />
                 <span>Temp (°C)</span>
               </button>
               <button
                 onClick={() => setChannelFilter('HUM')}
-                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                aria-pressed={channelFilter === 'HUM'}
+                aria-label="Filter channel Kelembaban Udara RH (%)"
+                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#0284C7] ${
                   channelFilter === 'HUM'
                     ? 'bg-white text-[#0284C7] shadow-xs font-bold'
-                    : 'text-[#617253] hover:text-[#0284C7]'
+                    : 'text-[#50645F] hover:text-[#0284C7]'
                 }`}
               >
-                <span className="w-2 h-2 rounded-full bg-[#0284C7]" />
+                <span className="w-2 h-2 rounded-full bg-[#0284C7]" aria-hidden="true" />
                 <span>RH (%)</span>
               </button>
               <button
                 onClick={() => setChannelFilter('FFMC')}
-                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                aria-pressed={channelFilter === 'FFMC'}
+                aria-label="Filter channel Indeks FFMC"
+                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#DC2626] ${
                   channelFilter === 'FFMC'
                     ? 'bg-white text-[#DC2626] shadow-xs font-bold'
-                    : 'text-[#617253] hover:text-[#DC2626]'
+                    : 'text-[#50645F] hover:text-[#DC2626]'
                 }`}
               >
-                <span className="w-2 h-2 rounded-full bg-[#DC2626]" />
+                <span className="w-2 h-2 rounded-full bg-[#DC2626]" aria-hidden="true" />
                 <span>FFMC (idx)</span>
               </button>
               <button
                 onClick={() => setChannelFilter('SOIL')}
-                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                aria-pressed={channelFilter === 'SOIL'}
+                aria-label="Filter channel Kelembaban Tanah (%)"
+                className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                   channelFilter === 'SOIL'
-                    ? 'bg-white text-[#597C00] shadow-xs font-bold'
-                    : 'text-[#617253] hover:text-[#597C00]'
+                    ? 'bg-white text-[#4E635E] shadow-xs font-bold'
+                    : 'text-[#50645F] hover:text-[#4E635E]'
                 }`}
               >
-                <span className="w-2 h-2 rounded-full bg-[#597C00]" />
+                <span className="w-2 h-2 rounded-full bg-[#4E635E]" aria-hidden="true" />
                 <span>Soil (%)</span>
               </button>
             </div>
 
-            <div className="flex rounded-xl bg-[#F4F7F2] p-1 border border-[#E4EBE0] text-xs font-semibold">
+            <div
+              className="flex rounded-xl bg-[#F5F4EE] p-1 border border-[#E2E0CB] text-xs font-semibold"
+              role="group"
+              aria-label="Filter Rentang Waktu Grafik"
+            >
               {(['LIVE', '1H', '6H', '24H'] as const).map((rng) => (
                 <button
                   key={rng}
                   onClick={() => setTimeRange(rng)}
-                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                  aria-pressed={timeRange === rng}
+                  aria-label={`Pilih rentang waktu riwayat ${rng}`}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                     timeRange === rng
-                      ? 'bg-white text-[#597C00] shadow-xs font-bold'
-                      : 'text-[#617253] hover:text-[#1B2408]'
+                      ? 'bg-white text-[#4E635E] shadow-xs font-bold'
+                      : 'text-[#50645F] hover:text-[#263A35]'
                   }`}
                 >
                   {rng}
@@ -297,20 +344,50 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
           </div>
         </div>
 
+        {/* Dual Axis Metric Legend Strip */}
+        <div className="flex items-center justify-between text-[11px] font-mono text-[#50645F] pb-2 border-b border-[#D6DCCE] mb-2 px-1 flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-[#263A35]">Y1 Axis (Left):</span>
+            <span className="flex items-center gap-1 text-[#0284C7] font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#0284C7]" />
+              RH %
+            </span>
+            <span className="text-[#CCD7CE]">·</span>
+            <span className="flex items-center gap-1 text-[#DC2626] font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#DC2626]" />
+              FFMC
+            </span>
+            <span className="text-[#CCD7CE]">·</span>
+            <span className="flex items-center gap-1 text-[#4E635E] font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
+              Soil %
+            </span>
+            <span className="text-[10px] text-[#50645F]">(0 – 100%)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[#D97706] font-semibold">
+            <span className="font-bold text-[#263A35]">Y2 Axis (Right):</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#D97706]" />
+            <span>Temp °C (0 – 40°C)</span>
+          </div>
+        </div>
+
         {/* Canvas Container */}
-        <div className="relative w-full h-[260px] my-2 bg-white rounded-xl">
+        <div className="relative w-full h-[260px] lg:h-[285px] xl:h-[300px] my-2 bg-white rounded-xl border border-[#D6DCCE] overflow-hidden">
           <canvas
             ref={canvasRef}
             onMouseMove={handleMouseMove}
             onMouseLeave={() => setHoverInfo(null)}
-            className="w-full h-[260px] block cursor-crosshair"
+            role="img"
+            aria-label={`Grafik riwayat multi-sensor dan FWI untuk rentang waktu ${timeRange} dengan filter channel ${channelFilter}`}
+            tabIndex={0}
+            className="w-full h-[260px] lg:h-[285px] xl:h-[300px] block cursor-crosshair focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
           />
           {hoverInfo && (
             <div
-              className="absolute z-20 pointer-events-none bg-[#1E2805] text-white p-3.5 rounded-xl shadow-xl text-xs border border-[#2C3B0E] -translate-x-1/2 -translate-y-full mb-2 min-w-[215px] backdrop-blur-sm"
+              className="absolute z-20 pointer-events-none bg-[#23312E] text-white p-3.5 rounded-xl shadow-xl text-xs border border-[#364844] -translate-x-1/2 -translate-y-full mb-2 min-w-[215px] backdrop-blur-sm"
               style={{ left: hoverInfo.x, top: Math.max(70, hoverInfo.y) }}
             >
-              <div className="text-[10px] font-bold text-[#9DB312] font-tabular border-b border-[#2C3B0E] pb-1.5 mb-2 flex items-center justify-between">
+              <div className="text-[10px] font-bold text-[#E2E0CB] font-tabular border-b border-[#364844] pb-1.5 mb-2 flex items-center justify-between">
                 <span>Time Recorded</span>
                 <span>{formatTimeShort(hoverInfo.record.timestamp)}</span>
               </div>
@@ -340,13 +417,13 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-[#F0F4E8] flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-[#597C00]" />
+                    <span className="w-2 h-2 rounded-full bg-[#4E635E]" />
                     Soil Moisture:
                   </span>
-                  <span className="font-bold text-[#C3D883]">{hoverInfo.record.soil_moisture.toFixed(1)} %</span>
+                  <span className="font-bold text-[#E2E0CB]">{hoverInfo.record.soil_moisture.toFixed(1)} %</span>
                 </div>
-                <div className="pt-1.5 mt-1.5 border-t border-[#2C3B0E] flex justify-between items-center">
-                  <span className="text-[#C3D883]">model_hazard.h:</span>
+                <div className="pt-1.5 mt-1.5 border-t border-[#364844] flex justify-between items-center">
+                  <span className="text-[#A6B49E]">model_hazard.h:</span>
                   <span className="font-bold text-white">
                     {hoverInfo.record.sensor_risk} ({hoverInfo.record.sensor_confidence.toFixed(1)}%)
                   </span>
@@ -357,14 +434,14 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
         </div>
 
         {/* Bottom 3 Trend Boxes */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 mt-4 pt-3 border-t border-[#E4EBE0]">
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 mt-4 pt-3 border-t border-[#D6DCCE]">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3.5 rounded-xl shadow-2xs flex flex-col justify-between min-h-[92px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block font-mono">
               Fine Fuel Moisture (FFMC) Trend
             </span>
             <span
-              className={`text-sm font-bold font-display block mt-1 ${
-                (latestRec?.ffmc ?? 0) >= 89.5 ? 'text-[#B43E1F]' : 'text-[#597C00]'
+              className={`text-sm font-bold font-display block mt-1.5 ${
+                (latestRec?.ffmc ?? 0) >= 89.5 ? 'text-[#B43E1F]' : 'text-[#4E635E]'
               }`}
             >
               {(latestRec?.ffmc ?? 0) >= 89.5
@@ -372,29 +449,29 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
                 : `Stable Fuel Moisture (${latestRec?.ffmc.toFixed(1)})`}
             </span>
           </div>
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3.5 rounded-xl shadow-2xs flex flex-col justify-between min-h-[92px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block font-mono">
               Soil Moisture Momentum (FLORA)
             </span>
             <span
-              className={`text-sm font-bold font-display block mt-1 ${
-                (latestRec?.soil_moisture ?? 50) < 30 ? 'text-[#D97706]' : 'text-[#597C00]'
+              className={`text-sm font-bold font-display block mt-1.5 ${
+                (latestRec?.soil_moisture ?? 50) < 30 ? 'text-[#D97706]' : 'text-[#4E635E]'
               }`}
             >
               {(latestRec?.soil_moisture ?? 50) < 30 ? 'Decreasing / Dry Stress' : 'Optimal Hydration'}
             </span>
           </div>
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3.5 rounded-xl shadow-2xs flex flex-col justify-between min-h-[92px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block font-mono">
               ESP32-CAM Optical Detection Trend
             </span>
             <span
-              className={`text-sm font-bold font-display block mt-1 ${
+              className={`text-sm font-bold font-display block mt-1.5 ${
                 latestRec?.vision_prediction.toLowerCase().includes('fire')
                   ? 'text-[#B43E1F]'
                   : latestRec?.vision_prediction.toLowerCase().includes('smoke')
                   ? 'text-[#EA580C]'
-                  : 'text-[#597C00]'
+                  : 'text-[#4E635E]'
               }`}
             >
               {latestRec?.vision_prediction || 'Healthy Forest Canopy'}
@@ -404,72 +481,90 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = ({ history 
       </section>
 
       {/* 24-Hour Statistical Summary Rollup */}
-      <section className="flora-card p-6 mt-8 shadow-xs">
-        <div className="flex justify-between items-start mb-4">
+      <section className="flora-card p-5 sm:p-6 mt-8 shadow-xs">
+        <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
           <div>
-            <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+            <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block font-mono">
               Aggregation Archive · Montesinho &amp; FLORA Reference
             </span>
-            <h2 className="text-base font-bold text-[#1B2408] font-display">
+            <h2 className="text-base font-bold text-[#263A35] font-display mt-0.5">
               24-Hour Statistical Summary &amp; Dataset Rollup
             </h2>
           </div>
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-[#F4F7F2] text-[#617253] border border-[#E4EBE0]">
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-[#EFF3EF] text-[#263A35] border border-[#A6B49E] shadow-2xs">
             {visiblePoints.length} Live Points · 517 FWI + 9,000 FLORA Rows
           </span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg Temp
             </span>
-            <span className="text-sm font-bold font-tabular text-[#1B2408] block mt-1">
-              {avgTemp.toFixed(1)}°C (Ref: 18.9°C)
+            <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
+              {avgTemp.toFixed(1)}°C
+            </span>
+            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
+              Ref: 18.9°C
             </span>
           </div>
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg RH
             </span>
-            <span className="text-sm font-bold font-tabular text-[#1B2408] block mt-1">
-              {avgHum.toFixed(1)}% (Ref: 44.3%)
+            <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
+              {avgHum.toFixed(1)}%
+            </span>
+            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
+              Ref: 44.3%
             </span>
           </div>
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg FFMC
             </span>
-            <span className="text-sm font-bold font-tabular text-[#1B2408] block mt-1">
-              {avgFfmc.toFixed(1)} (Ref: 90.6)
+            <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
+              {avgFfmc.toFixed(1)}
+            </span>
+            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
+              Ref: 90.6
             </span>
           </div>
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg Soil
             </span>
-            <span className="text-sm font-bold font-tabular text-[#1B2408] block mt-1">
-              {avgSoil.toFixed(1)}% (Ref: 67.2%)
+            <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
+              {avgSoil.toFixed(1)}%
+            </span>
+            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
+              Ref: 67.2%
             </span>
           </div>
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Dominant Vision
             </span>
-            <span className="text-sm font-bold font-display text-[#1B2408] block mt-1 truncate">
+            <span className="text-sm font-bold font-display text-[#263A35] block mt-1 truncate">
               {latestRec?.vision_prediction || 'Healthy Canopy'}
             </span>
+            <span className="text-[10px] text-[#4E635E] font-mono block mt-0.5 truncate">
+              ESP-NOW Cam
+            </span>
           </div>
-          <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-3.5 rounded-xl">
-            <span className="text-[10px] font-bold text-[#617253] uppercase tracking-wider block">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+            <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Dominant Risk
             </span>
-            <span className="text-sm font-bold font-tabular text-[#597C00] block mt-1">
-              {latestRec?.sensor_risk || 'LOW'} ({latestRec?.sensor_confidence.toFixed(1)}%)
+            <span className="text-sm font-bold font-tabular text-[#4E635E] block mt-1">
+              {latestRec?.sensor_risk || 'LOW'}
+            </span>
+            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
+              {latestRec?.sensor_confidence.toFixed(1)}% conf
             </span>
           </div>
         </div>
       </section>
     </>
   );
-};
+});

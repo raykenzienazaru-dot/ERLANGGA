@@ -1,16 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --flora-deep: #1E2805;
-  --flora-primary-dark: #1E2805;
-  --flora-primary: #597C00;
-  --flora-secondary: #658406;
-  --flora-accent: #9DB312;
-  --flora-canvas: #F7FAF8;
+  --flora-deep: #23312E;
+  --flora-primary-dark: #23312E;
+  --flora-primary: #4E635E;
+  --flora-secondary: #818C78;
+  --flora-accent: #A6B49E;
+  --flora-highlight: #E2E0CB;
+  --flora-canvas: #F7F8F5;
   --flora-surface: #FFFFFF;
-  --flora-border: #E4EBE0;
-  --flora-ink: #1B2408;
-  --flora-muted: #617253;
+  --flora-border: #D6DCCE;
+  --flora-ink: #263A35;
+  --flora-muted: #50645F;
 }
 
 html {
@@ -19,8 +20,8 @@ html {
 
 body {
   margin: 0;
-  background-color: #F7FAF8;
-  color: #1B2408;
+  background-color: #F7F8F5;
+  color: #263A35;
   font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -59,6 +60,7 @@ body {
   background: linear-gradient(135deg, #1E2805, #597C00 28%, #9DB312, #597C00 82%, #1E2805);
   background-size: 250% 250%;
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: floraGreenShift 6s ease-in-out infinite;
 }
@@ -66,28 +68,28 @@ body {
 /* Card Surface Styling from flora-six-zeta.vercel.app */
 .flora-card {
   background: #FFFFFF;
-  border: 1px solid #E4EBE0;
+  border: 1px solid #D6DCCE;
   border-radius: 18px;
-  box-shadow: 0 2px 10px rgba(30, 40, 5, 0.03);
+  box-shadow: 0 2px 10px rgba(38, 58, 53, 0.03);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .flora-card:hover {
-  border-color: #D3DECE;
-  box-shadow: 0 6px 18px rgba(30, 40, 5, 0.06);
+  border-color: #818C78;
+  box-shadow: 0 6px 18px rgba(38, 58, 53, 0.06);
 }
 
 .flora-card-hero {
-  background: linear-gradient(135deg, #1E2805, #2A3B0B 48%, #3F5511);
-  border: 1px solid #334411;
+  background: linear-gradient(135deg, #23312E, #364844 48%, #4E635E);
+  border: 1px solid #4E635E;
   border-radius: 20px;
   color: #FFFFFF;
-  box-shadow: 0 12px 32px rgba(30, 40, 5, 0.16);
+  box-shadow: 0 12px 32px rgba(38, 58, 53, 0.16);
 }
 
 .flora-subtle-well {
-  background: #F4F7F2;
-  border: 1px solid #E4EBE0;
+  background: #F5F4EE;
+  border: 1px solid #E2E0CB;
   border-radius: 12px;
 }
 
@@ -182,4 +184,77 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #A3BDB2;
+}
+
+/* === PHASE 01: DASHBOARD DESIGN SYSTEM UTILITIES (ISOLATED - ZERO SPLASH OVERLAP) === */
+.flora-card-interactive {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.flora-card-interactive:hover {
+  border-color: #818C78;
+  box-shadow: 0 4px 14px rgba(38, 58, 53, 0.08);
+}
+
+.flora-focus-ring:focus-visible {
+  outline: 2px solid #4E635E;
+  outline-offset: 2px;
+}
+
+.flora-table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #C4CCC0 #F5F4EE;
+}
+.flora-table-scroll::-webkit-scrollbar {
+  height: 5px;
+}
+.flora-table-scroll::-webkit-scrollbar-track {
+  background: #F5F4EE;
+  border-radius: 4px;
+}
+.flora-table-scroll::-webkit-scrollbar-thumb {
+  background: #C4CCC0;
+  border-radius: 4px;
+}
+.flora-table-scroll::-webkit-scrollbar-thumb:hover {
+  background: #818C78;
+}
+
+/* === PHASE 02: LAYOUT & RESPONSIVE DASHBOARD UTILITIES === */
+.flora-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #4E635E #1A2522;
+}
+.flora-sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.flora-sidebar-scroll::-webkit-scrollbar-track {
+  background: #1A2522;
+}
+.flora-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #3B4D48;
+  border-radius: 4px;
+}
+.flora-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #4E635E;
+}
+
+/* === PHASE 03: MONITORING & DATA VISUALIZATION POLISH UTILITIES === */
+.flora-meter-bar {
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: width;
+}
+
+.flora-chart-axis-pill {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+/* === PHASE 08: DESKTOP-FIRST UI REFINEMENT UTILITIES (ISOLATED - ZERO SPLASH OVERLAP) === */
+@media (min-width: 1024px) {
+  .flora-desktop-panel-align {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
 }

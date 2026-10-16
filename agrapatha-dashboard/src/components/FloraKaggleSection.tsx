@@ -29,7 +29,7 @@ interface FloraKaggleSectionProps {
   onSelectPreset: (presetId: string) => void;
 }
 
-export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
+export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = React.memo(({
   temp,
   rh,
   wind,
@@ -140,41 +140,43 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
   ];
 
   return (
-    <section id="benchmarks" className="mt-8 space-y-6">
+    <section id="benchmarks" className="scroll-mt-6 sm:scroll-mt-8 space-y-6">
       {/* 1. Interactive C Header Model Simulator */}
       <div className="flora-card p-6 shadow-xs">
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 mb-5 pb-4 border-b border-[#E4EBE0]">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 mb-5 pb-4 border-b border-[#D6DCCE]">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+              <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                 Interactive C Header Kernel Simulator · Real-Time Inference
               </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#EAF4E8] text-[#22531A] border border-[#C4E1BF]">
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#EFF3EF] text-[#263A35] border border-[#A6B49E]">
                 100 Decision Trees Active
               </span>
             </div>
-            <h2 className="text-lg font-bold text-[#1B2408] font-display mt-0.5">
-              Simulasi Parameter <code className="text-[#597C00] font-mono text-base">model_hazard.h</code> &amp;{' '}
-              <code className="text-[#597C00] font-mono text-base">grenvis_sensor_model.h</code>
+            <h2 className="text-lg font-bold text-[#263A35] font-display mt-0.5">
+              Simulasi Parameter <code className="text-[#4E635E] font-mono text-base">model_hazard.h</code> &amp;{' '}
+              <code className="text-[#4E635E] font-mono text-base">grenvis_sensor_model.h</code>
             </h2>
-            <p className="text-xs text-[#617253] mt-0.5">
+            <p className="text-xs text-[#50645F] mt-0.5">
               Geser nilai fitur di bawah ini atau pilih preset sampel asli dari{' '}
-              <code className="font-mono text-[#1B2408]">forestfires.csv</code> untuk mengeksekusi fungsi C{' '}
-              <code className="font-mono text-[#597C00]">void score(double *input, double *output)</code> secara langsung.
+              <code className="font-mono text-[#263A35]">forestfires.csv</code> untuk mengeksekusi fungsi C{' '}
+              <code className="font-mono text-[#4E635E]">void score(double *input, double *output)</code> secara langsung.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div role="group" aria-label="Preset Skenario Kebakaran Hutan" className="flex flex-wrap gap-2">
             {REAL_DATASET_PRESETS.map((preset) => {
               const isActive = activePresetId === preset.id;
               return (
                 <button
                   key={preset.id}
                   onClick={() => onSelectPreset(preset.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border cursor-pointer ${
+                  aria-pressed={isActive}
+                  aria-label={`Pilih preset skenario ${preset.name}`}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                     isActive
-                      ? 'bg-[#1E2805] text-white border-[#1E2805] shadow-xs ring-2 ring-[#9DB312]/50'
-                      : 'bg-[#F4F7F2] text-[#1B2408] border-[#E4EBE0] hover:bg-[#EAF4E8] hover:border-[#C4E1BF]'
+                      ? 'bg-[#4E635E] text-white border-[#4E635E] shadow-xs ring-2 ring-[#A6B49E]'
+                      : 'bg-[#F5F4EE] text-[#263A35] border-[#E2E0CB] hover:bg-[#EFF3EF] hover:border-[#A6B49E]'
                   }`}
                 >
                   {preset.shortName}
@@ -188,15 +190,15 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {sliders.map((s) => (
-              <div key={s.field} className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3.5">
-                <div className="flex justify-between items-center mb-1">
-                  <div>
-                    <span className="text-xs font-bold text-[#1B2408] block">{s.label}</span>
-                    <span className="text-[10px] font-mono text-[#617253]">
+              <div key={s.field} className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors rounded-xl p-3.5 shadow-2xs flex flex-col justify-between min-h-[118px]">
+                <div className="flex justify-between items-center mb-1 gap-2">
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-[#263A35] block truncate">{s.label}</span>
+                    <span className="text-[10px] font-mono text-[#50645F] block truncate">
                       {s.code} · {s.dataset}
                     </span>
                   </div>
-                  <span className="text-sm font-bold font-tabular text-[#597C00] bg-white px-2.5 py-1 rounded-lg border border-[#E4EBE0]">
+                  <span className="text-sm font-bold font-tabular text-[#4E635E] bg-white px-2.5 py-1 rounded-lg border border-[#E2E0CB] shadow-2xs shrink-0 whitespace-nowrap">
                     {s.value.toFixed(1)} {s.unit}
                   </span>
                 </div>
@@ -207,9 +209,14 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
                   step={s.step}
                   value={s.value}
                   onChange={(e) => onChangeParam(s.field, parseFloat(e.target.value))}
-                  className="w-full accent-[#597C00] cursor-pointer h-2 bg-[#E4EBE0] rounded-lg mt-2"
+                  aria-label={`Slider pengaturan nilai ${s.label} (${s.code})`}
+                  aria-valuemin={s.min}
+                  aria-valuemax={s.max}
+                  aria-valuenow={s.value}
+                  aria-valuetext={`${s.value.toFixed(1)} ${s.unit}`}
+                  className="w-full accent-[#4E635E] cursor-pointer h-2 bg-[#E2E0CB] rounded-lg mt-2 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                 />
-                <div className="flex justify-between text-[10px] font-tabular text-[#617253] mt-1">
+                <div className="flex justify-between text-[10px] font-tabular text-[#50645F] mt-1">
                   <span>Min: {s.min}</span>
                   <span>
                     Mean: {s.mean} (±{s.std})
@@ -220,37 +227,37 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
             ))}
 
             {/* Derived FWI DC & ISI readouts */}
-            <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3.5 flex flex-col justify-between">
+            <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors rounded-xl p-3.5 flex flex-col justify-between shadow-2xs min-h-[118px]">
               <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-[#1B2408]">Derived FWI Indices (DC &amp; ISI)</span>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white border border-[#E4EBE0] text-[#597C00]">
+                <span className="text-xs font-bold text-[#263A35]">Derived FWI Indices (DC &amp; ISI)</span>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white border border-[#E2E0CB] text-[#4E635E]">
                   Montesinho FWI
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2 my-2">
-                <div className="bg-white border border-[#E4EBE0] rounded-lg p-2">
-                  <span className="text-[10px] text-[#617253] block">Drought Code (DC)</span>
-                  <span className="text-sm font-bold font-tabular text-[#1B2408]">{dc.toFixed(1)}</span>
-                  <span className="text-[9px] text-[#617253] block">Range: 7.9 – 860.6</span>
+                <div className="bg-white border border-[#E2E0CB] rounded-lg p-2">
+                  <span className="text-[10px] text-[#50645F] block">Drought Code (DC)</span>
+                  <span className="text-sm font-bold font-tabular text-[#263A35]">{dc.toFixed(1)}</span>
+                  <span className="text-[9px] text-[#50645F] block">Range: 7.9 – 860.6</span>
                 </div>
-                <div className="bg-white border border-[#E4EBE0] rounded-lg p-2">
-                  <span className="text-[10px] text-[#617253] block">Initial Spread (ISI)</span>
-                  <span className="text-sm font-bold font-tabular text-[#1B2408]">{isi.toFixed(1)}</span>
-                  <span className="text-[9px] text-[#617253] block">Range: 0.0 – 56.1</span>
+                <div className="bg-white border border-[#E2E0CB] rounded-lg p-2">
+                  <span className="text-[10px] text-[#50645F] block">Initial Spread (ISI)</span>
+                  <span className="text-sm font-bold font-tabular text-[#263A35]">{isi.toFixed(1)}</span>
+                  <span className="text-[9px] text-[#50645F] block">Range: 0.0 – 56.1</span>
                 </div>
               </div>
-              <span className="text-[10px] text-[#617253]">
+              <span className="text-[10px] text-[#50645F]">
                 Mean dataset: DC = 547.94 (±248.07) · ISI = 9.02 (±4.56)
               </span>
             </div>
           </div>
 
           {/* C Header Output Terminal Box */}
-          <div className="bg-[#1E2805] text-white rounded-2xl p-5 border border-[#2C3B0E] flex flex-col justify-between">
+          <div className="bg-[#23312E] text-white rounded-2xl p-5 border border-[#364844] flex flex-col justify-between">
             <div>
-              <div className="flex items-center justify-between border-b border-[#334411] pb-3 mb-3.5">
+              <div className="flex items-center justify-between border-b border-[#364844] pb-3 mb-3.5">
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-[#9DB312] block">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB] block">
                     Live C Model Execution
                   </span>
                   <h3 className="text-sm font-bold font-mono text-white mt-0.5">score(input, output)</h3>
@@ -261,21 +268,21 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
                       ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
                       : hazardResult.riskLevel === 'MODERATE'
                       ? 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]'
-                      : 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
+                      : 'bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]'
                   }`}
                 >
                   {hazardResult.riskLevel} HAZARD
                 </span>
               </div>
 
-              <div className="bg-[#141D04] border border-[#2C3B0E] rounded-xl p-3 font-mono text-[11px] space-y-1.5 mb-4">
-                <div className="text-[#C3D883] text-[10px]">// Input Ciri [temp, RH, wind, rain, FFMC, DMC]</div>
+              <div className="bg-[#1A2522] border border-[#364844] rounded-xl p-3 font-mono text-[11px] space-y-1.5 mb-4">
+                <div className="text-[#A6B49E] text-[10px]">// Input Ciri [temp, RH, wind, rain, FFMC, DMC]</div>
                 <div className="text-white break-all">
                   double input[6] = &#123; {temp.toFixed(1)}, {rh.toFixed(1)}, {wind.toFixed(1)}, {rain.toFixed(1)},{' '}
                   {ffmc.toFixed(1)}, {dmc.toFixed(1)} &#125;;
                 </div>
-                <div className="text-[#C3D883] text-[10px] pt-1">// Output [P(High), P(Low), P(Moderate)]</div>
-                <div className="text-[#9DB312] font-bold">
+                <div className="text-[#A6B49E] text-[10px] pt-1">// Output [P(High), P(Low), P(Moderate)]</div>
+                <div className="text-[#E2E0CB] font-bold">
                   output[3] = &#123; {hazardResult.rawVector[0].toFixed(4)}, {hazardResult.rawVector[1].toFixed(4)},{' '}
                   {hazardResult.rawVector[2].toFixed(4)} &#125;;
                 </div>
@@ -283,44 +290,44 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
 
               {/* Dual Model Comparison */}
               <div className="space-y-3">
-                <div className="bg-[#141D04] border border-[#2C3B0E] rounded-xl p-3">
+                <div className="bg-[#1A2522] border border-[#364844] rounded-xl p-3">
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-[#C3D883] font-semibold">1. model_hazard.h (100 Trees RF)</span>
+                    <span className="text-[#E2E0CB] font-semibold">1. model_hazard.h (100 Trees RF)</span>
                     <span className="font-bold font-tabular text-white">{hazardResult.confidence.toFixed(1)}%</span>
                   </div>
                   <div className="grid grid-cols-3 gap-1.5 text-[10px] font-tabular mt-2">
-                    <div className="bg-[#1E2805] p-1.5 rounded border border-[#2C3B0E] text-center">
+                    <div className="bg-[#23312E] p-1.5 rounded border border-[#364844] text-center">
                       <span className="text-[#FCA5A5] block">High [0]</span>
                       <strong className="text-white">{hazardResult.highProbability.toFixed(1)}%</strong>
                     </div>
-                    <div className="bg-[#1E2805] p-1.5 rounded border border-[#2C3B0E] text-center">
+                    <div className="bg-[#23312E] p-1.5 rounded border border-[#364844] text-center">
                       <span className="text-[#86EFAC] block">Low [1]</span>
                       <strong className="text-white">{hazardResult.lowProbability.toFixed(1)}%</strong>
                     </div>
-                    <div className="bg-[#1E2805] p-1.5 rounded border border-[#2C3B0E] text-center">
+                    <div className="bg-[#23312E] p-1.5 rounded border border-[#364844] text-center">
                       <span className="text-[#FDE68A] block">Mod [2]</span>
                       <strong className="text-white">{hazardResult.moderateProbability.toFixed(1)}%</strong>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-[#141D04] border border-[#2C3B0E] rounded-xl p-3">
+                <div className="bg-[#1A2522] border border-[#364844] rounded-xl p-3">
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-[#C3D883] font-semibold">2. grenvis_sensor_model.h (MLP)</span>
-                    <span className="font-bold font-tabular text-[#9DB312]">
+                    <span className="text-[#E2E0CB] font-semibold">2. grenvis_sensor_model.h (MLP)</span>
+                    <span className="font-bold font-tabular text-[#E2E0CB]">
                       {floraResult.sensorRisk.toUpperCase()} ({floraResult.sensorConfidence.toFixed(1)}%)
                     </span>
                   </div>
                   <div className="grid grid-cols-3 gap-1.5 text-[10px] font-tabular mt-2">
-                    <div className="bg-[#1E2805] p-1.5 rounded border border-[#2C3B0E] text-center">
+                    <div className="bg-[#23312E] p-1.5 rounded border border-[#364844] text-center">
                       <span className="text-[#FCA5A5] block">High [0]</span>
                       <strong className="text-white">{floraResult.highProbability.toFixed(1)}%</strong>
                     </div>
-                    <div className="bg-[#1E2805] p-1.5 rounded border border-[#2C3B0E] text-center">
+                    <div className="bg-[#23312E] p-1.5 rounded border border-[#364844] text-center">
                       <span className="text-[#86EFAC] block">Low [1]</span>
                       <strong className="text-white">{floraResult.lowProbability.toFixed(1)}%</strong>
                     </div>
-                    <div className="bg-[#1E2805] p-1.5 rounded border border-[#2C3B0E] text-center">
+                    <div className="bg-[#23312E] p-1.5 rounded border border-[#364844] text-center">
                       <span className="text-[#FDE68A] block">Mod [2]</span>
                       <strong className="text-white">{floraResult.moderateProbability.toFixed(1)}%</strong>
                     </div>
@@ -329,13 +336,13 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
               </div>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-[#334411] flex items-center justify-between text-xs">
-              <span className="text-[#C3D883]">Kaggle Binary Class (0/1):</span>
+            <div className="mt-4 pt-3 border-t border-[#364844] flex items-center justify-between text-xs">
+              <span className="text-[#A6B49E]">Kaggle Binary Class (0/1):</span>
               <span
                 className={`px-2.5 py-0.5 rounded-md font-mono font-bold ${
                   hazardResult.kaggleBinaryPrediction === 'On Fire'
                     ? 'bg-[#DC2626] text-white'
-                    : 'bg-[#367C29] text-white'
+                    : 'bg-[#4E635E] text-white'
                 }`}
               >
                 {hazardResult.kaggleBinaryPrediction === 'On Fire' ? "1: 'On Fire'" : "0: 'safe'"}
@@ -352,10 +359,10 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
           <div>
             <div className="flex justify-between items-start gap-2 mb-4">
               <div>
-                <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                   Kaggle Reference 1 · Forest Fire Area Classification
                 </span>
-                <h3 className="text-base font-bold text-[#1B2408] font-display mt-0.5">
+                <h3 className="text-base font-bold text-[#263A35] font-display mt-0.5">
                   Classifier Benchmark &amp; Holdout Evaluation (517 Samples)
                 </h3>
               </div>
@@ -363,7 +370,7 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
                 href={KAGGLE_FOREST_FIRE_STATS.notebookUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[11px] font-bold text-[#597C00] bg-[#EAF4E8] hover:bg-[#DDF0D9] px-2.5 py-1 rounded-lg border border-[#C4E1BF] transition-colors shrink-0"
+                className="text-[11px] font-bold text-[#263A35] bg-[#EFF3EF] hover:bg-[#E2E0CB] px-2.5 py-1 rounded-lg border border-[#A6B49E] transition-colors shrink-0"
               >
                 Kaggle Notebook ↗
               </a>
@@ -371,33 +378,38 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
 
             {/* Dataset Split Pill Row */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-2.5 rounded-xl">
-                <span className="text-[10px] font-bold text-[#617253] uppercase block">Total Rows</span>
-                <span className="text-base font-bold font-tabular text-[#1B2408]">517</span>
-                <span className="text-[10px] text-[#617253] block">361 Train / 156 Test</span>
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] p-2.5 rounded-xl">
+                <span className="text-[10px] font-bold text-[#50645F] uppercase block">Total Rows</span>
+                <span className="text-base font-bold font-tabular text-[#263A35]">517</span>
+                <span className="text-[10px] text-[#50645F] block">361 Train / 156 Test</span>
               </div>
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-2.5 rounded-xl">
-                <span className="text-[10px] font-bold text-[#617253] uppercase block">Binary Label</span>
-                <span className="text-base font-bold font-tabular text-[#1B2408]">270 / 247</span>
-                <span className="text-[10px] text-[#617253] block">52.2% Fire · 47.8% Safe</span>
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] p-2.5 rounded-xl">
+                <span className="text-[10px] font-bold text-[#50645F] uppercase block">Binary Label</span>
+                <span className="text-base font-bold font-tabular text-[#263A35]">270 / 247</span>
+                <span className="text-[10px] text-[#50645F] block">52.2% Fire · 47.8% Safe</span>
               </div>
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-2.5 rounded-xl">
-                <span className="text-[10px] font-bold text-[#617253] uppercase block">model_hazard.h</span>
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] p-2.5 rounded-xl">
+                <span className="text-[10px] font-bold text-[#50645F] uppercase block">model_hazard.h</span>
                 <span className="text-base font-bold font-tabular text-[#961C1C]">338 High</span>
-                <span className="text-[10px] text-[#617253] block">146 Mod · 33 Low</span>
+                <span className="text-[10px] text-[#50645F] block">146 Mod · 33 Low</span>
               </div>
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] p-2.5 rounded-xl">
-                <span className="text-[10px] font-bold text-[#617253] uppercase block">Max Burned Area</span>
-                <span className="text-base font-bold font-tabular text-[#1B2408]">1090.84 ha</span>
-                <span className="text-[10px] text-[#617253] block">Mean: 12.85 ha</span>
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] p-2.5 rounded-xl">
+                <span className="text-[10px] font-bold text-[#50645F] uppercase block">Max Burned Area</span>
+                <span className="text-base font-bold font-tabular text-[#263A35]">1090.84 ha</span>
+                <span className="text-[10px] text-[#50645F] block">Mean: 12.85 ha</span>
               </div>
             </div>
 
             {/* Holdout Table */}
-            <div className="overflow-x-auto border border-[#E4EBE0] rounded-xl">
+            <div
+              className="overflow-x-auto border border-[#E2E0CB] rounded-xl flora-table-scroll focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+              tabIndex={0}
+              role="region"
+              aria-label="Tabel Evaluasi Holdout Classifier Kaggle"
+            >
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-[#F4F7F2] border-b border-[#E4EBE0] text-[10px] font-bold text-[#617253] uppercase">
+                  <tr className="bg-[#F5F4EE] border-b border-[#E2E0CB] text-[10px] font-bold text-[#50645F] uppercase">
                     <th className="py-2.5 px-3">Algorithm (test_size=0.3)</th>
                     <th className="py-2.5 px-2.5 text-right">Accuracy</th>
                     <th className="py-2.5 px-2.5 text-right">Precision</th>
@@ -405,16 +417,16 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
                     <th className="py-2.5 px-3 text-right">Confusion Matrix</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#E4EBE0] font-tabular">
+                <tbody className="divide-y divide-[#E2E0CB] font-tabular">
                   {KAGGLE_FOREST_FIRE_STATS.classifiersHoldout.map((clf) => (
-                    <tr key={clf.name} className="hover:bg-[#F4F7F2]/60">
-                      <td className="py-2 px-3 font-sans font-semibold text-[#1B2408]">{clf.name}</td>
-                      <td className="py-2 px-2.5 text-right font-bold text-[#597C00]">{clf.accuracy.toFixed(2)}%</td>
-                      <td className="py-2 px-2.5 text-right text-[#1B2408]">{clf.precision.toFixed(2)}%</td>
-                      <td className="py-2 px-2.5 text-right text-[#1B2408]">{clf.recall.toFixed(2)}%</td>
-                      <td className="py-2 px-3 text-right text-[11px] text-[#617253]">
+                    <tr key={clf.name} className="hover:bg-[#EFF3EF]/80 transition-colors">
+                      <td className="py-2 px-3 font-sans font-semibold text-[#263A35] whitespace-nowrap">{clf.name}</td>
+                      <td className="py-2 px-2.5 text-right font-bold text-[#4E635E] whitespace-nowrap">{clf.accuracy.toFixed(2)}%</td>
+                      <td className="py-2 px-2.5 text-right text-[#263A35] whitespace-nowrap">{clf.precision.toFixed(2)}%</td>
+                      <td className="py-2 px-2.5 text-right text-[#263A35] whitespace-nowrap">{clf.recall.toFixed(2)}%</td>
+                      <td className="py-2 px-3 text-right text-[11px] text-[#50645F] whitespace-nowrap font-mono">
                         {clf.confusionMatrix
-                          ? `[[${clf.confusionMatrix[0][0]}, ${clf.confusionMatrix[0][1]}], [${clf.confusionMatrix[1][0]}, ${clf.confusionMatrix[1][1]}]]`
+                           ? `[[${clf.confusionMatrix[0][0]}, ${clf.confusionMatrix[0][1]}], [${clf.confusionMatrix[1][0]}, ${clf.confusionMatrix[1][1]}]]`
                           : 'Optimal K=19'}
                       </td>
                     </tr>
@@ -424,25 +436,26 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
             </div>
 
             {/* Official x_new test vector box */}
-            <div className="mt-3.5 bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3">
+            <div className="mt-3.5 bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors rounded-xl p-3 shadow-2xs">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#597C00]">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#4E635E]">
                   Notebook Test Sample (Cell 25, 27, 29, 30, 32)
                 </span>
                 <button
                   onClick={() => onSelectPreset('kaggle-xnew-benchmark')}
-                  className="text-[10px] font-bold text-white bg-[#1E2805] hover:bg-[#2C3B0E] px-2 py-0.5 rounded cursor-pointer"
+                  aria-label="Muat vektor sampel pengujian x_new ke simulator C header"
+                  className="min-h-[30px] text-[10px] font-bold text-white bg-[#4E635E] hover:bg-[#3B4D49] px-2.5 py-1 rounded cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                 >
                   Load x_new ke Simulator
                 </button>
               </div>
-              <code className="text-[11px] font-mono text-[#1B2408] block break-all">
+              <code className="text-[11px] font-mono text-[#263A35] block break-all">
                 x_new = [[1, 4, 9, 1, 91.5, 130.1, 807.1, 7.5, 21.3, 35, 2.2, 0]] → Output: &apos;On Fire&apos; (63.68% High Risk)
               </code>
             </div>
           </div>
 
-          <div className="mt-4 pt-3 border-t border-[#E4EBE0] text-[11px] text-[#617253]">
+          <div className="mt-4 pt-3 border-t border-[#D6DCCE] text-[11px] text-[#50645F]">
             10-Fold Cross Validation (<code className="font-mono">seed=7</code>): SVM (0.4802) · KNN (0.4684) · MLP (0.4414) · CART (0.4373) · Bagging (0.4298) · GradientBoost (0.4279) · ExtraTrees (0.4086) · NB (0.3975) · AdaBoost (0.3969) · LR (0.3952) · RF (0.3911).
           </div>
         </div>
@@ -452,10 +465,10 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
           <div>
             <div className="flex justify-between items-start gap-2 mb-4">
               <div>
-                <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
                   Kaggle Reference 2 · FLORA Environmental Risk Dataset
                 </span>
-                <h3 className="text-base font-bold text-[#1B2408] font-display mt-0.5">
+                <h3 className="text-base font-bold text-[#263A35] font-display mt-0.5">
                   Microclimate Sensor Distribution (9,000 Balanced Samples)
                 </h3>
               </div>
@@ -463,17 +476,17 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
                 href={KAGGLE_FLORA_DATASET_STATS.datasetUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[11px] font-bold text-[#597C00] bg-[#EAF4E8] hover:bg-[#DDF0D9] px-2.5 py-1 rounded-lg border border-[#C4E1BF] transition-colors shrink-0"
+                className="text-[11px] font-bold text-[#263A35] bg-[#EFF3EF] hover:bg-[#E2E0CB] px-2.5 py-1 rounded-lg border border-[#A6B49E] transition-colors shrink-0"
               >
                 Kaggle Dataset ↗
               </a>
             </div>
 
             <div className="grid grid-cols-3 gap-2.5 mb-4">
-              <div className="bg-[#EAF4E8] border border-[#C4E1BF] p-3 rounded-xl text-center">
-                <span className="text-[10px] font-bold text-[#22531A] uppercase block">Low Risk Class</span>
-                <span className="text-lg font-bold font-tabular text-[#22531A]">3,000</span>
-                <span className="text-[10px] text-[#22531A]/80 block">33.33% Balanced</span>
+              <div className="bg-[#EFF3EF] border border-[#A6B49E] p-3 rounded-xl text-center">
+                <span className="text-[10px] font-bold text-[#263A35] uppercase block">Low Risk Class</span>
+                <span className="text-lg font-bold font-tabular text-[#263A35]">3,000</span>
+                <span className="text-[10px] text-[#50645F] block">33.33% Balanced</span>
               </div>
               <div className="bg-[#FEF7E8] border border-[#FDE3B5] p-3 rounded-xl text-center">
                 <span className="text-[10px] font-bold text-[#8A570C] uppercase block">Moderate Risk</span>
@@ -488,61 +501,61 @@ export const FloraKaggleSection: React.FC<FloraKaggleSectionProps> = ({
             </div>
 
             <div className="space-y-2.5 mb-4">
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3 flex justify-between items-center">
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3 flex justify-between items-center">
                 <div>
-                  <span className="text-xs font-bold text-[#1B2408] block">
+                  <span className="text-xs font-bold text-[#263A35] block">
                     temperature_c · Suhu Udara Ambien (DHT22)
                   </span>
-                  <span className="text-[11px] text-[#617253]">StandardScaler Normalization Parameter</span>
+                  <span className="text-[11px] text-[#50645F]">StandardScaler Normalization Parameter</span>
                 </div>
                 <div className="text-right font-tabular">
-                  <span className="text-sm font-bold text-[#1B2408] block">Mean: 28.62 °C</span>
-                  <span className="text-[11px] text-[#597C00] font-semibold">Std: ±4.91 °C</span>
+                  <span className="text-sm font-bold text-[#263A35] block">Mean: 28.62 °C</span>
+                  <span className="text-[11px] text-[#4E635E] font-semibold">Std: ±4.91 °C</span>
                 </div>
               </div>
 
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3 flex justify-between items-center">
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3 flex justify-between items-center">
                 <div>
-                  <span className="text-xs font-bold text-[#1B2408] block">
+                  <span className="text-xs font-bold text-[#263A35] block">
                     humidity_percent · Kelembapan Udara Relatif (DHT22)
                   </span>
-                  <span className="text-[11px] text-[#617253]">StandardScaler Normalization Parameter</span>
+                  <span className="text-[11px] text-[#50645F]">StandardScaler Normalization Parameter</span>
                 </div>
                 <div className="text-right font-tabular">
-                  <span className="text-sm font-bold text-[#1B2408] block">Mean: 59.83 %</span>
-                  <span className="text-[11px] text-[#597C00] font-semibold">Std: ±14.31 %</span>
+                  <span className="text-sm font-bold text-[#263A35] block">Mean: 59.83 %</span>
+                  <span className="text-[11px] text-[#4E635E] font-semibold">Std: ±14.31 %</span>
                 </div>
               </div>
 
-              <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3 flex justify-between items-center">
+              <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3 flex justify-between items-center">
                 <div>
-                  <span className="text-xs font-bold text-[#1B2408] block">
+                  <span className="text-xs font-bold text-[#263A35] block">
                     soil_moisture_percent · Kelembapan Tanah (Capacitive)
                   </span>
-                  <span className="text-[11px] text-[#617253]">StandardScaler Normalization Parameter</span>
+                  <span className="text-[11px] text-[#50645F]">StandardScaler Normalization Parameter</span>
                 </div>
                 <div className="text-right font-tabular">
-                  <span className="text-sm font-bold text-[#1B2408] block">Mean: 67.15 %</span>
-                  <span className="text-[11px] text-[#597C00] font-semibold">Std: ±17.56 %</span>
+                  <span className="text-sm font-bold text-[#263A35] block">Mean: 67.15 %</span>
+                  <span className="text-[11px] text-[#4E635E] font-semibold">Std: ±17.56 %</span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-[#F4F7F2] border border-[#E4EBE0] rounded-xl p-3.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#597C00] block mb-1">
+            <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#4E635E] block mb-1">
                 Dual Edge-AI Firmware Architecture (C Header Models)
               </span>
-              <p className="text-xs text-[#1B2408] leading-relaxed m-0">
+              <p className="text-xs text-[#263A35] leading-relaxed m-0">
                 Sistem menggabungkan <strong>model_hazard.h</strong> (100-Tree Random Forest <code className="font-mono">m2cgen</code>, 19.591 baris kode C untuk prediksi bahaya api <code className="font-mono">[temp, RH, wind, rain, FFMC, DMC]</code>) dan <strong>grenvis_sensor_model.h</strong> (TFLite Micro Neural Network 3→16→8→3 <code className="font-mono">2.988 bytes</code> untuk evaluasi stres mikroklimat tanah &amp; kanopi).
               </p>
             </div>
           </div>
 
-          <div className="mt-4 pt-3 border-t border-[#E4EBE0] text-[11px] text-[#617253]">
+          <div className="mt-4 pt-3 border-t border-[#D6DCCE] text-[11px] text-[#50645F]">
             Kedua model C header dieksekusi langsung di memori browser dengan bobot dan pohon keputusan asli tanpa pembulatan.
           </div>
         </div>
       </div>
     </section>
   );
-};
+});
