@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   computeFwiComponents,
   evaluateFloraSensorModel,
@@ -9,6 +9,35 @@ import { FloraSplash } from './components/FloraSplash';
 import { FloraKaggleSection } from './components/FloraKaggleSection';
 import { FloraHistoryCanvas, type TelemetryHistoryPoint } from './components/FloraHistoryCanvas';
 import { FloraBmkgCard } from './components/FloraBmkgCard';
+import {
+  Camera,
+  Upload,
+  RotateCcw,
+  AlertCircle,
+  CheckCircle2,
+  Flame,
+  Leaf,
+  Video,
+  VideoOff,
+  Sparkles,
+  Info,
+} from 'lucide-react';
+import type {
+  CameraStatus,
+  CaptureSource,
+  InferenceStatus,
+  LeafDiseasePredictionData,
+  VisionDomain,
+  WildfirePredictionData,
+} from './types/vision';
+import {
+  captureFrameFromVideo,
+  startCameraStream,
+  stopMediaStream,
+  validateImageFile,
+} from './lib/cameraCapture';
+import { predictWildfireImage } from './lib/wildfireService';
+import { isLeafDiseaseApiConfigured, predictLeafDiseaseImage } from './lib/leafDiseaseService';
 
 const SECTION_IDS = [
   'overview',
@@ -104,6 +133,25 @@ export const App: React.FC = () => {
   const [visionProbs, setVisionProbs] = useState({ healthy: 6.4, smoke: 88.2, fire: 5.4 });
   const [isCapturing, setIsCapturing] = useState(false);
   const [lastCaptureTime, setLastCaptureTime] = useState<string>(() => new Date().toISOString());
+
+  // Phase 2B: Real Camera, Upload & Dual-Domain Inference State
+  const [visionDomain, setVisionDomain] = useState<VisionDomain>('wildfire');
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
+  const [captureSource, setCaptureSource] = useState<CaptureSource>('none');
+  const [capturedBlob, setCapturedBlob] = useState<Blob | File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [inferenceStatus, setInferenceStatus] = useState<InferenceStatus>('idle');
+  const [inferenceError, setInferenceError] = useState<string | null>(null);
+  const [wildfireResult, setWildfireResult] = useState<WildfirePredictionData | null>(null);
+  const [leafResult, setLeafResult] = useState<LeafDiseasePredictionData | null>(null);
+  const [leafPrediction, setLeafPrediction] = useState<string | null>(null);
+  const [leafProbs, setLeafProbs] = useState({ healthy: 0, powdery: 0, rust: 0 });
+  const [isVideoReady, setIsVideoReady] = useState<boolean>(false);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const activeInferenceAbortRef = useRef<AbortController | null>(null);
 
   // Memoize camera canopy SVG to avoid string building and URI encoding on each render
   const canopyFrameSvg = useMemo(
@@ -394,17 +442,287 @@ export const App: React.FC = () => {
     setMobileMenuOpen(false);
   };
 
-  // Camera capture action
-  const handleTriggerCameraScan = () => {
+  // Phase 2B.2: Stop active camera stream and abort pending inference strictly on unmount
+  useEffect(() => {
+    return () => {
+      stopMediaStream(streamRef.current);
+      streamRef.current = null;
+      if (activeInferenceAbortRef.current) {
+        activeInferenceAbortRef.current.abort();
+        activeInferenceAbortRef.current = null;
+      }
+    };
+  }, []);
+
+  // Phase 2B.2: Revoke preview object URL when it changes or on unmount
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  // Phase 2B.2: Synchronize stream attachment when cameraStatus transitions to 'streaming'
+  useEffect(() => {
+    if (cameraStatus === 'streaming' && videoRef.current && streamRef.current) {
+      const video = videoRef.current;
+      if (video.srcObject !== streamRef.current) {
+        video.srcObject = streamRef.current;
+      }
+      video.muted = true;
+      video.play().catch((playErr: unknown) => {
+        if (playErr instanceof DOMException && playErr.name === 'AbortError') return;
+        const msg = playErr instanceof Error ? playErr.message : 'Browser memblokir pemutaran otomatis.';
+        setInferenceError(`Gagal memutar preview kamera: ${msg}`);
+      });
+    }
+  }, [cameraStatus]);
+
+  // Phase 2B.2: Callback ref to attach stream immediately as soon as the <video> element mounts in DOM
+  const setVideoElement = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (node && streamRef.current) {
+      if (node.srcObject !== streamRef.current) {
+        node.srcObject = streamRef.current;
+      }
+      node.muted = true;
+      node.play().catch((playErr: unknown) => {
+        if (playErr instanceof DOMException && playErr.name === 'AbortError') return;
+        const msg = playErr instanceof Error ? playErr.message : 'Browser memblokir pemutaran otomatis.';
+        setInferenceError(`Gagal memutar preview kamera: ${msg}`);
+      });
+    }
+  }, []);
+
+  // Handle switching domain: clear domain-specific states without mixing results
+  const handleDomainChange = (newDomain: VisionDomain) => {
+    if (newDomain === visionDomain) return;
+    if (activeInferenceAbortRef.current) {
+      activeInferenceAbortRef.current.abort();
+      activeInferenceAbortRef.current = null;
+    }
+    setVisionDomain(newDomain);
+    setInferenceStatus('idle');
+    setInferenceError(null);
+    if (newDomain === 'leaf_disease') {
+      setLeafResult(null);
+      setLeafPrediction(null);
+      setLeafProbs({ healthy: 0, powdery: 0, rust: 0 });
+    }
+  };
+
+  // Start live device camera stream
+  const handleStartCamera = async () => {
+    setInferenceError(null);
+    setIsVideoReady(false);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+    setCapturedBlob(null);
+    setCaptureSource('none');
+
+    // Prevent duplicate streams or orphaned tracks
+    if (streamRef.current) {
+      stopMediaStream(streamRef.current);
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setCameraStatus('requesting');
+
+    try {
+      const stream = await startCameraStream();
+      streamRef.current = stream;
+      setCameraStatus('streaming');
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.muted = true;
+        videoRef.current.play().catch((playErr: unknown) => {
+          if (playErr instanceof DOMException && playErr.name === 'AbortError') return;
+          const msg = playErr instanceof Error ? playErr.message : 'Browser memblokir pemutaran otomatis.';
+          setInferenceError(`Gagal memutar preview kamera: ${msg}`);
+        });
+      }
+    } catch (err: unknown) {
+      stopMediaStream(streamRef.current);
+      streamRef.current = null;
+      setIsVideoReady(false);
+      const isDenied = err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'PERMISSION_DENIED';
+      setCameraStatus(isDenied ? 'permission_denied' : 'device_error');
+      const msg = err instanceof Error ? err.message : 'Gagal membuka kamera perangkat.';
+      setInferenceError(msg);
+      showToast(msg);
+    }
+  };
+
+  // Stop camera stream
+  const handleStopCamera = () => {
+    stopMediaStream(streamRef.current);
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsVideoReady(false);
+    setCameraStatus('idle');
+  };
+
+  // Capture frame from active video stream
+  const handleCaptureFromVideo = async () => {
+    if (!videoRef.current || cameraStatus !== 'streaming') return;
+    const v = videoRef.current;
+    if (!isVideoReady || v.videoWidth <= 0 || v.videoHeight <= 0) {
+      showToast('Kamera sedang mempersiapkan frame, harap tunggu sebentar...');
+      return;
+    }
+    try {
+      const blob = await captureFrameFromVideo(v);
+      stopMediaStream(streamRef.current);
+      streamRef.current = null;
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      setIsVideoReady(false);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      const url = URL.createObjectURL(blob);
+      setCapturedBlob(blob);
+      setPreviewUrl(url);
+      setCaptureSource('camera');
+      setCameraStatus('captured');
+      setInferenceStatus('idle');
+      setInferenceError(null);
+      showToast('Frame foto berhasil diambil dari kamera.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal mengambil frame foto.';
+      setInferenceError(msg);
+      showToast(msg);
+    }
+  };
+
+  // Handle file upload
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    handleStopCamera();
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setInferenceError(validation.error || 'File tidak valid.');
+      showToast(validation.error || 'File tidak valid.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    const url = URL.createObjectURL(file);
+    setCapturedBlob(file);
+    setPreviewUrl(url);
+    setCaptureSource('upload');
+    setCameraStatus('captured');
+    setInferenceStatus('idle');
+    setInferenceError(null);
+    showToast(`Gambar dipilih: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
+  };
+
+  // Reset / retake photo
+  const handleRetake = () => {
+    handleStopCamera();
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+    setCapturedBlob(null);
+    setCaptureSource('none');
+    setCameraStatus('idle');
+    setInferenceStatus('idle');
+    setInferenceError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Run real inference on capturedBlob
+  const handleAnalyzeImage = async () => {
+    if (!capturedBlob || isCapturing) return;
+
     setIsCapturing(true);
-    setLastCommand('C');
-    setMovementStatus('capture_command_sent');
-    setTimeout(() => {
-      setLastCaptureTime(new Date().toISOString());
-      appendSnapshotToHistory();
+    setInferenceStatus('analyzing');
+    setInferenceError(null);
+
+    const abortController = new AbortController();
+    activeInferenceAbortRef.current = abortController;
+
+    if (visionDomain === 'wildfire') {
+      const res = await predictWildfireImage(capturedBlob, abortController.signal);
       setIsCapturing(false);
-      showToast('Foto kanopi & inferensi AI model_hazard.h diperbarui');
-    }, 650);
+      activeInferenceAbortRef.current = null;
+
+      if (res.success && res.data) {
+        setWildfireResult(res.data);
+        const labelMap: Record<string, 'Healthy Forest Canopy' | 'Smoke Plume Detected' | 'Active Surface Fire'> = {
+          'Non-Fire': 'Healthy Forest Canopy',
+          'Smoke': 'Smoke Plume Detected',
+          'Fire': 'Active Surface Fire',
+        };
+        const mappedLabel = labelMap[res.data.predicted_label] || 'Healthy Forest Canopy';
+        setVisionPrediction(mappedLabel);
+        setVisionProbs({
+          healthy: res.data.scores['Non-Fire'] * 100,
+          smoke: res.data.scores['Smoke'] * 100,
+          fire: res.data.scores['Fire'] * 100,
+        });
+        const ts = res.data.timestamp || new Date().toISOString();
+        setLastCaptureTime(ts);
+        appendSnapshotToHistory(temp, rh, soilMoisture, wind, rain, ffmc, dmc, dc, isi, mappedLabel);
+        setInferenceStatus('success');
+        showToast(`Inferensi Karhutla Sukses: ${res.data.predicted_label} (${res.data.confidence_percentage.toFixed(1)}%)`);
+      } else {
+        setInferenceStatus('error');
+        setInferenceError(res.error || 'Gagal memproses inferensi citra karhutla.');
+        showToast(res.error || 'Inferensi gagal.');
+      }
+    } else {
+      // Leaf Disease domain (isolated from wildfire endpoint)
+      const res = await predictLeafDiseaseImage(capturedBlob, abortController.signal);
+      setIsCapturing(false);
+      activeInferenceAbortRef.current = null;
+
+      if (res.success && res.data) {
+        setLeafResult(res.data);
+        setLeafPrediction(res.data.predicted_label);
+        setLeafProbs({
+          healthy: (res.data.scores['Healthy'] || 0) * 100,
+          powdery: (res.data.scores['Powdery Mildew'] || 0) * 100,
+          rust: (res.data.scores['Leaf Rust'] || 0) * 100,
+        });
+        const ts = res.data.timestamp || new Date().toISOString();
+        setLastCaptureTime(ts);
+        setInferenceStatus('success');
+        showToast(`Diagnosa Daun Sukses: ${res.data.predicted_label}`);
+      } else {
+        setInferenceStatus('error');
+        setInferenceError(res.error || 'Layanan inferensi penyakit daun tidak tersedia.');
+        showToast(res.error || 'Layanan daun belum terhubung.');
+      }
+    }
+  };
+
+  // Unified Camera capture action
+  const handleTriggerCameraScan = () => {
+    if (cameraStatus === 'streaming') {
+      handleCaptureFromVideo();
+    } else if (capturedBlob) {
+      handleAnalyzeImage();
+    } else {
+      handleStartCamera();
+    }
   };
 
   // L298N Rail Carriage commands
@@ -1308,7 +1626,7 @@ export const App: React.FC = () => {
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
-                        Software AI Vision Engine · ESP32-CAM Stream
+                        Software AI Vision Engine · Topologi Kamera Sensor
                       </span>
                       <h2 className="text-base font-bold text-[#263A35] font-display mt-0.5">
                         Optical Canopy &amp; Plume Classification
@@ -1316,7 +1634,7 @@ export const App: React.FC = () => {
                     </div>
                     <span className="text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
                       <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
-                      ESP-NOW Active
+                      Topologi Preset
                     </span>
                   </div>
 
@@ -1426,154 +1744,516 @@ export const App: React.FC = () => {
 
             {/* 5. CAMERA STREAM CAPTURE SECTION (#cameraCapture) */}
             <section id="cameraCapture" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
+              {/* Header Bar with Title and Domain Selector */}
               <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
                 <div>
                   <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
-                    Camera Subsystem (Software AI Vision)
+                    Camera Subsystem · Edge &amp; Cloud AI Vision
                   </span>
                   <h2 className="text-lg font-bold text-[#263A35] font-display mt-0.5">
-                    Forest Canopy &amp; Rail Surveillance Camera Stream
+                    {visionDomain === 'wildfire'
+                      ? 'Pemindaian Kanopi & Verifikasi Visual Titik Api'
+                      : 'Diagnosa Penyakit Daun & Patologi Tanaman'}
                   </h2>
                 </div>
+
+                {/* Domain Selector & Status Pill */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    onClick={handleTriggerCameraScan}
-                    disabled={isCapturing}
-                    aria-busy={isCapturing}
-                    aria-label={isCapturing ? 'Sedang memproses pemindaian kamera...' : 'Ambil Foto Pemindaian Kanopi'}
-                    className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
-                  >
-                    <span aria-hidden="true">{isCapturing ? '⏳' : '📸'}</span>
-                    <span>{isCapturing ? 'Memproses...' : 'Ambil Foto Sekarang'}</span>
-                  </button>
+                  {/* Domain Toggle Tabs */}
+                  <div className="flex p-0.5 rounded-full bg-[#E2E0CB] border border-[#D6DCCE]">
+                    <button
+                      type="button"
+                      onClick={() => handleDomainChange('wildfire')}
+                      className={`text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${
+                        visionDomain === 'wildfire'
+                          ? 'bg-[#4E635E] text-white shadow-xs'
+                          : 'text-[#263A35] hover:text-[#4E635E]'
+                      }`}
+                      aria-pressed={visionDomain === 'wildfire'}
+                    >
+                      <Flame size={12} />
+                      <span>Karhutla (Wildfire)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDomainChange('leaf_disease')}
+                      className={`text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${
+                        visionDomain === 'leaf_disease'
+                          ? 'bg-[#4E635E] text-white shadow-xs'
+                          : 'text-[#263A35] hover:text-[#4E635E]'
+                      }`}
+                      aria-pressed={visionDomain === 'leaf_disease'}
+                    >
+                      <Leaf size={12} />
+                      <span>Penyakit Daun</span>
+                    </button>
+                  </div>
+
+                  {/* Optical State Indicator Badge */}
                   <span className="text-xs font-semibold px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
-                    Optical Frame Ready
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        cameraStatus === 'streaming'
+                          ? isVideoReady
+                            ? 'bg-[#22C55E] animate-pulse'
+                            : 'bg-[#EAB308] animate-pulse'
+                          : cameraStatus === 'captured'
+                          ? 'bg-[#4E635E]'
+                          : cameraStatus === 'permission_denied' || cameraStatus === 'device_error'
+                          ? 'bg-[#EF4444]'
+                          : 'bg-[#9CA3AF]'
+                      }`}
+                    />
+                    <span>
+                      {cameraStatus === 'streaming'
+                        ? isVideoReady
+                          ? 'Kamera Live Aktif'
+                          : 'Memuat Stream Kamera...'
+                        : cameraStatus === 'captured'
+                        ? 'Frame Siap Dianalisis'
+                        : cameraStatus === 'permission_denied'
+                        ? 'Izin Kamera Ditolak'
+                        : cameraStatus === 'device_error'
+                        ? 'Kamera Tidak Tersedia'
+                        : 'Kamera Siap'}
+                    </span>
                   </span>
                 </div>
               </div>
 
+              {/* Action Toolbar: Camera Live vs Upload vs Retake vs Analyze */}
+              <div className="flex flex-wrap justify-between items-center gap-2 mb-4 p-2.5 rounded-xl bg-[#F5F4EE] border border-[#E2E0CB]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {cameraStatus === 'streaming' ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleCaptureFromVideo}
+                        disabled={!isVideoReady}
+                        className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Camera size={13} />
+                        <span>{isVideoReady ? 'Ambil Foto Frame' : 'Menyiapkan Kamera...'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopCamera}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white hover:bg-[#EFF3EF] text-[#263A35] border border-[#D6DCCE] flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <VideoOff size={13} />
+                        <span>Tutup Kamera</span>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleStartCamera}
+                        className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+                      >
+                        <Video size={13} />
+                        <span>Buka Kamera Laptop/HP</span>
+                      </button>
+
+                      <label className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white hover:bg-[#EFF3EF] text-[#263A35] border border-[#D6DCCE] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
+                        <Upload size={13} />
+                        <span>Unggah Foto</span>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleFileChange}
+                        />
+                      </label>
+                    </>
+                  )}
+
+                  {capturedBlob && (
+                    <button
+                      type="button"
+                      onClick={handleRetake}
+                      disabled={isCapturing}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white hover:bg-[#FEE2E2] text-[#B91C1C] border border-[#FECACA] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <RotateCcw size={13} />
+                      <span>Ulangi / Ganti Foto</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Main Analyze Button */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAnalyzeImage}
+                    disabled={!capturedBlob || isCapturing}
+                    aria-busy={isCapturing}
+                    className="text-xs font-semibold px-4 py-1.5 rounded-full bg-[#263A35] hover:bg-[#1A2522] text-[#E2E0CB] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#263A35]"
+                  >
+                    {isCapturing ? (
+                      <>
+                        <span className="inline-block animate-spin">⏳</span>
+                        <span>Menganalisis...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={13} className="text-[#5DD62C]" />
+                        <span>
+                          {visionDomain === 'wildfire' ? 'Analisis Karhutla (Railway API)' : 'Diagnosa Penyakit Daun'}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Error Banner if Inference or Camera Failed */}
+              {inferenceError && (
+                <div className="mb-4 p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] flex items-start gap-2.5 text-xs text-[#991B1B]">
+                  <AlertCircle size={15} className="shrink-0 mt-0.5 text-[#DC2626]" />
+                  <div className="flex-1">
+                    <span className="font-bold block">Pemberitahuan Sistem:</span>
+                    <p className="mt-0.5 leading-relaxed m-0">{inferenceError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Main 2-Column Content Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
+                {/* Left: Video / Image Viewport */}
                 <div className="lg:col-span-2 relative min-h-[340px] xl:min-h-[380px] bg-[#1A2522] border border-[#D6DCCE] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-xs">
-                  <img
-                    src={canopyFrameSvg}
-                    alt="Forest canopy capture from ESP32-CAM"
-                    className="w-full h-full object-cover absolute inset-0"
-                  />
-                  {/* Unified responsive camera overlay */}
+                  {cameraStatus === 'streaming' ? (
+                    <>
+                      <video
+                        ref={setVideoElement}
+                        autoPlay
+                        playsInline
+                        muted
+                        onLoadedMetadata={(e) => {
+                          const v = e.currentTarget;
+                          if (v.videoWidth > 0 && v.videoHeight > 0) {
+                            setIsVideoReady(true);
+                          }
+                          v.play().catch((playErr: unknown) => {
+                            if (playErr instanceof DOMException && playErr.name === 'AbortError') return;
+                            const msg = playErr instanceof Error ? playErr.message : 'Browser memblokir pemutaran otomatis.';
+                            setInferenceError(`Gagal memutar preview kamera: ${msg}`);
+                          });
+                        }}
+                        onPlaying={(e) => {
+                          const v = e.currentTarget;
+                          if (v.videoWidth > 0 && v.videoHeight > 0) {
+                            setIsVideoReady(true);
+                          }
+                        }}
+                        onError={() => {
+                          setIsVideoReady(false);
+                          setCameraStatus('device_error');
+                          setInferenceError('Terjadi kesalahan pada decoding stream video kamera.');
+                        }}
+                        className="w-full h-full object-cover absolute inset-0"
+                      />
+                      {/* Live Stream Top HUD */}
+                      <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-mono border border-[#364844] flex items-center gap-1.5 shadow-xs">
+                        <span className={`w-2 h-2 rounded-full ${isVideoReady ? 'bg-[#22C55E] animate-ping' : 'bg-[#EAB308]'}`} />
+                        <span>{isVideoReady ? 'LIVE DEVICE CAMERA · MEDIASTREAM' : 'MEMUAT FEED KAMERA...'}</span>
+                      </div>
+                    </>
+                  ) : previewUrl ? (
+                    <>
+                      <img
+                        src={previewUrl}
+                        alt="Captured frame ready for analysis"
+                        className="w-full h-full object-cover absolute inset-0"
+                      />
+                      {/* Captured Frame HUD */}
+                      <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-mono border border-[#364844] flex items-center gap-1.5 shadow-xs">
+                        <CheckCircle2 size={12} className="text-[#5DD62C]" />
+                        <span>{captureSource === 'camera' ? 'FRAME FOTO KAMERA' : 'UNGGAHAN GAMBAR'}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Fallback Simulation Frame */}
+                      <img
+                        src={canopyFrameSvg}
+                        alt="Simulated forest canopy preview"
+                        className="w-full h-full object-cover absolute inset-0 opacity-25"
+                      />
+                      <div className="relative z-10 p-6 max-w-sm flex flex-col items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-[#23312E]/90 border border-[#364844] flex items-center justify-center text-[#5DD62C] shadow-md">
+                          <Camera size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-[#F4F7F5]">
+                            {visionDomain === 'wildfire'
+                              ? 'Kamera Pemantau Kanopi Hutan'
+                              : 'Kamera Diagnosa Patologi Daun'}
+                          </h3>
+                          <p className="text-xs text-[#A6B49E] mt-1 leading-relaxed">
+                            Buka kamera laptop/smartphone Anda atau unggah file foto untuk verifikasi visual langsung ke model AI.
+                          </p>
+                        </div>
+                        <div className="flex gap-2 mt-1">
+                          <button
+                            type="button"
+                            onClick={handleStartCamera}
+                            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                          >
+                            <Video size={13} />
+                            <span>Buka Kamera</span>
+                          </button>
+                          <label className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#23312E] hover:bg-[#2C3B37] text-[#E2E0CB] border border-[#364844] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
+                            <Upload size={13} />
+                            <span>Unggah Foto</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleFileChange}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Bottom Viewport Overlay Telemetry */}
                   <div className="absolute inset-x-3 bottom-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 z-10 pointer-events-none">
                     <div className="px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-medium backdrop-blur-sm border border-[#364844] shadow-xs max-w-full truncate">
-                      ESP32-CAM Node · Rail Position {railPositionMm} mm · ESP-NOW (Simulated Frame)
+                      {visionDomain === 'wildfire'
+                        ? `Mode: Karhutla · Rel: ${railPositionMm} mm · Source: ${captureSource === 'camera' ? 'Webcam' : captureSource === 'upload' ? 'Upload' : 'Simulasi'}`
+                        : `Mode: Diagnosa Daun · Status Layanan: ${isLeafDiseaseApiConfigured() ? 'Tersambung' : 'Belum Dideploy'}`}
                     </div>
+
                     <div className="flex flex-wrap items-center justify-start sm:justify-end gap-1.5">
-                      <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
-                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
-                        Healthy: {visionProbs.healthy.toFixed(1)}%
-                      </span>
-                      <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
-                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#FB923C]" />
-                        Smoke: {visionProbs.smoke.toFixed(1)}%
-                      </span>
-                      <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
-                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#F87171]" />
-                        Fire: {visionProbs.fire.toFixed(1)}%
-                      </span>
+                      {visionDomain === 'wildfire' ? (
+                        <>
+                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
+                            Healthy: {visionProbs.healthy.toFixed(1)}%
+                          </span>
+                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#FB923C]" />
+                            Smoke: {visionProbs.smoke.toFixed(1)}%
+                          </span>
+                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#F87171]" />
+                            Fire: {visionProbs.fire.toFixed(1)}%
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
+                            Healthy: {leafProbs.healthy.toFixed(1)}%
+                          </span>
+                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#EAB308]" />
+                            Powdery: {leafProbs.powdery.toFixed(1)}%
+                          </span>
+                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#EA580C]" />
+                            Rust: {leafProbs.rust.toFixed(1)}%
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
 
+                {/* Right: Telemetry & Classification Meters */}
                 <div className="flex flex-col justify-between gap-3">
                   <div className="space-y-2.5">
+                    {/* Timestamp & Engine Card */}
                     <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5">
-                      <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
-                        Last Optical Scan Time
-                      </span>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
+                          Waktu Pemindaian Optik
+                        </span>
+                        {wildfireResult && visionDomain === 'wildfire' && (
+                          <span className="text-[10px] font-mono font-bold text-[#4E635E] bg-[#EFF3EF] px-1.5 py-0.5 rounded border border-[#D6DCCE]">
+                            {wildfireResult.inference_time_ms.toFixed(1)} ms
+                          </span>
+                        )}
+                        {leafResult && visionDomain === 'leaf_disease' && (
+                          <span className="text-[10px] font-mono font-bold text-[#4E635E] bg-[#EFF3EF] px-1.5 py-0.5 rounded border border-[#D6DCCE]">
+                            {leafResult.inference_time_ms.toFixed(1)} ms
+                          </span>
+                        )}
+                      </div>
                       <span className="text-sm font-bold text-[#263A35] font-tabular block mt-1">
                         {new Date(lastCaptureTime).toLocaleTimeString('id-ID', {
                           hour: '2-digit',
                           minute: '2-digit',
                           second: '2-digit',
                         })}{' '}
-                        (Live Stream)
+                        <span className="text-xs font-normal text-[#50645F]">
+                          ({captureSource === 'camera' ? 'Kamera' : captureSource === 'upload' ? 'Upload' : 'Preset'})
+                        </span>
+                      </span>
+                      <span className="text-[10px] text-[#50645F] block mt-1 font-mono">
+                        {visionDomain === 'wildfire'
+                          ? `Engine: ${wildfireResult?.model_name || 'MobileNetV2 (tes-tflite Railway)'}`
+                          : `Engine: ${leafResult?.model_name || 'MobileNetV3 (PlantDoc 3-Class)'}`}
                       </span>
                     </div>
 
+                    {/* Detected Pattern & Confidence Card */}
                     <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 flex justify-between items-center">
                       <div>
                         <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
-                          Detected Scene Pattern
+                          {visionDomain === 'wildfire' ? 'Pola Citra Terdeteksi' : 'Diagnosa Penyakit Daun'}
                         </span>
                         <span className="text-sm font-bold text-[#263A35] block mt-0.5 font-display">
-                          {visionPrediction}
+                          {visionDomain === 'wildfire'
+                            ? visionPrediction
+                            : leafPrediction || (isLeafDiseaseApiConfigured() ? 'Siap Dianalisis' : 'Layanan Belum Tersedia')}
                         </span>
                       </div>
                       <div className="text-right">
                         <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
-                          Confidence
+                          Keyakinan (Confidence)
                         </span>
                         <span className="text-sm font-bold text-[#4E635E] font-tabular block mt-0.5">
-                          {Math.max(visionProbs.healthy, visionProbs.smoke, visionProbs.fire).toFixed(1)}%
+                          {visionDomain === 'wildfire'
+                            ? `${Math.max(visionProbs.healthy, visionProbs.smoke, visionProbs.fire).toFixed(1)}%`
+                            : leafPrediction
+                            ? `${Math.max(leafProbs.healthy, leafProbs.powdery, leafProbs.rust).toFixed(1)}%`
+                            : '-'}
                         </span>
                       </div>
                     </div>
 
+                    {/* Classification Meter Bars */}
                     <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 space-y-2.5">
                       <div className="flex justify-between items-center mb-0.5">
                         <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
-                          Hasil Klasifikasi Citra Kanopi
+                          {visionDomain === 'wildfire'
+                            ? 'Klasifikasi Karhutla (Railway API)'
+                            : 'Klasifikasi Penyakit Daun (3-Kelas)'}
                         </span>
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md border bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
-                          Frame Teranalisis
+                          {inferenceStatus === 'analyzing'
+                            ? 'Memproses...'
+                            : inferenceStatus === 'success'
+                            ? 'Server Terverifikasi'
+                            : 'Frame Teranalisis'}
                         </span>
                       </div>
-                      <div>
-                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
-                          <span>Healthy Canopy</span>
-                          <span className="font-tabular text-[#4E635E] font-bold">
-                            {visionProbs.healthy.toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-[#4E635E] flora-meter-bar"
-                            style={{ width: `${visionProbs.healthy}%` }}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
-                          <span>Smoke Plume</span>
-                          <span className="font-tabular text-[#9A3412] font-bold">
-                            {visionProbs.smoke.toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-[#EA580C] flora-meter-bar"
-                            style={{ width: `${visionProbs.smoke}%` }}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
-                          <span>Surface Fire</span>
-                          <span className="font-tabular text-[#7C2D12] font-bold">
-                            {visionProbs.fire.toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-[#B43E1F] flora-meter-bar"
-                            style={{ width: `${visionProbs.fire}%` }}
-                          />
-                        </div>
-                      </div>
+
+                      {visionDomain === 'wildfire' ? (
+                        <>
+                          {/* Wildfire Bar 1: Non-Fire */}
+                          <div>
+                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                              <span>Healthy Canopy (Non-Fire)</span>
+                              <span className="font-tabular text-[#4E635E] font-bold">
+                                {visionProbs.healthy.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-[#4E635E] flora-meter-bar transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.max(0, visionProbs.healthy))}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Wildfire Bar 2: Smoke */}
+                          <div>
+                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                              <span>Smoke Plume (Smoke)</span>
+                              <span className="font-tabular text-[#9A3412] font-bold">
+                                {visionProbs.smoke.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-[#EA580C] flora-meter-bar transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.max(0, visionProbs.smoke))}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Wildfire Bar 3: Fire */}
+                          <div>
+                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                              <span>Surface Fire (Fire)</span>
+                              <span className="font-tabular text-[#7C2D12] font-bold">
+                                {visionProbs.fire.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-[#B43E1F] flora-meter-bar transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.max(0, visionProbs.fire))}%` }}
+                              />
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {/* Leaf Disease Bar 1: Healthy */}
+                          <div>
+                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                              <span>Healthy (Daun Sehat)</span>
+                              <span className="font-tabular text-[#4E635E] font-bold">
+                                {leafProbs.healthy.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-[#4E635E] flora-meter-bar transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.max(0, leafProbs.healthy))}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Leaf Disease Bar 2: Powdery Mildew */}
+                          <div>
+                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                              <span>Powdery Mildew (Embun Tepung)</span>
+                              <span className="font-tabular text-[#CA8A04] font-bold">
+                                {leafProbs.powdery.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-[#EAB308] flora-meter-bar transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.max(0, leafProbs.powdery))}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Leaf Disease Bar 3: Leaf Rust */}
+                          <div>
+                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                              <span>Leaf Rust (Karat Daun)</span>
+                              <span className="font-tabular text-[#C2410C] font-bold">
+                                {leafProbs.rust.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-[#EA580C] flora-meter-bar transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.max(0, leafProbs.rust))}%` }}
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  <div className="bg-[#F5F4EE] border border-[#E2E0CB] p-3 rounded-xl">
-                    <p className="text-[11px] text-[#50645F] m-0 leading-relaxed">
-                      Citra kanopi hutan dan klasifikasi model AI ditransmisikan secara nirkabel untuk verifikasi visual titik panas (hotspot).
+                  {/* Informational Footer Note */}
+                  <div className="bg-[#F5F4EE] border border-[#E2E0CB] p-3 rounded-xl flex items-start gap-2 text-[11px] text-[#50645F] leading-relaxed">
+                    <Info size={14} className="shrink-0 mt-0.5 text-[#4E635E]" />
+                    <p className="m-0">
+                      {visionDomain === 'wildfire'
+                        ? 'Inferensi terhubung ke API Railway FastAPI (MobileNetV2 TFLite). Mengirim gambar riil melalui multipart form field file.'
+                        : 'Domain penyakit daun terisolasi secara independen. Tidak akan memanipulasi atau mengirim data daun ke model titik api.'}
                     </p>
                   </div>
                 </div>
@@ -1870,14 +2550,14 @@ export const App: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 lg:gap-4">
                 {[
-                  { label: 'ESP32 Main Node', status: 'CONNECTED', detail: 'MAC: 8C:AA:B5:37:71:18' },
-                  { label: 'ESP32-CAM Node', status: 'CONNECTED', detail: 'MAC: F8:B3:B7:A6:F3:9C' },
-                  { label: 'C Edge Kernel 1', status: 'ACTIVE', detail: 'model_hazard.h (100 Trees RF)' },
-                  { label: 'C Edge Kernel 2', status: 'ACTIVE', detail: 'grenvis_sensor_model.h (TFLite)' },
-                  { label: 'MQTT Broker', status: 'CONNECTED', detail: 'TLS Transport Pipeline (EMQX)' },
-                  { label: 'ESP-NOW Link', status: 'ACTIVE', detail: 'Inter-Board Wireless Mesh (CH 6)' },
-                  { label: 'FWI & DHT22 Array', status: 'STREAMING', detail: 'Temp, RH, Wind, Rain, FFMC, DMC' },
-                  { label: 'Scanner Motor L298N', status: 'READY', detail: `Carriage @ ${railPositionMm} mm` },
+                  { label: 'ESP32 Main Node', status: 'TOPOLOGY PRESET', detail: 'MAC: 8C:AA:B5:37:71:18 · Telemetri Belum Terhubung' },
+                  { label: 'ESP32-CAM Node', status: 'TOPOLOGY PRESET', detail: 'MAC: F8:B3:B7:A6:F3:9C · Fallback Kamera Aktif' },
+                  { label: 'C Edge Kernel 1', status: 'ACTIVE', detail: 'model_hazard.h (100 Trees RF in-memory)' },
+                  { label: 'C Edge Kernel 2', status: 'ACTIVE', detail: 'grenvis_sensor_model.h (TFLite in-memory)' },
+                  { label: 'MQTT Broker', status: 'UNCONFIGURED', detail: 'EMQX TLS Pipeline · Belum Tersambung ke Browser' },
+                  { label: 'ESP-NOW Link', status: 'TOPOLOGY PRESET', detail: 'Inter-Board Wireless Mesh (CH 6)' },
+                  { label: 'FWI & DHT22 Array', status: 'SIMULATED', detail: 'Temp, RH, Wind, Rain, FFMC, DMC' },
+                  { label: 'Scanner Motor L298N', status: 'SIMULATED', detail: `Carriage @ ${railPositionMm} mm` },
                 ].map((dev) => (
                   <article key={dev.label} className="flora-card flora-card-interactive p-4 shadow-xs flex flex-col justify-between min-h-[96px]">
                     <div className="flex justify-between items-center mb-1">
