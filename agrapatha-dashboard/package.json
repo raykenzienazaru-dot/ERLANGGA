@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --experimental-strip-types --test src/lib/bmkgService.test.ts src/lib/visionService.test.ts",
+    "test": "node --experimental-strip-types --test src/lib/bmkgService.test.ts src/lib/visionService.test.ts src/lib/mqttService.test.ts",
+    "test:mqtt": "node ../scripts/test-emqx.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "clsx": "^2.1.1",
     "framer-motion": "^14.1.0",
     "lucide-react": "^1.55.0",
+    "mqtt": "^5.16.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "recharts": "^3.10.1",

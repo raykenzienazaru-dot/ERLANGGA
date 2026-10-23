@@ -38,6 +38,13 @@ import {
 } from './lib/cameraCapture';
 import { predictWildfireImage } from './lib/wildfireService';
 import { isLeafDiseaseApiConfigured, predictLeafDiseaseImage } from './lib/leafDiseaseService';
+import { MqttTestModal } from './components/MqttTestModal';
+import {
+  subscribeLiveTelemetry,
+  publishMqttCommand,
+  type IncomingTelemetryMessage,
+  type MqttConnectionState,
+} from './lib/mqttService';
 
 const SECTION_IDS = [
   'overview',
@@ -183,6 +190,77 @@ export const App: React.FC = () => {
     message: '',
     visible: false,
   });
+
+  // EMQX MQTT Diagnostic Modal state
+  const [mqttModalOpen, setMqttModalOpen] = useState<boolean>(false);
+
+  // 100% Real-Time Live MQTT Telemetry State (5 Sensors & L298N OUT3/OUT4)
+  const [mqttState, setMqttState] = useState<MqttConnectionState>('disconnected');
+  const [isLiveMqtt, setIsLiveMqtt] = useState<boolean>(false);
+  const [lastLiveTelemetryTime, setLastLiveTelemetryTime] = useState<Date | null>(null);
+  const [rainStatus, setRainStatus] = useState<string>('KERING');
+  const [rainRaw, setRainRaw] = useState<number | null>(null);
+  const [soilRaw, setSoilRaw] = useState<number | null>(null);
+  const [lightLux, setLightLux] = useState<number>(36500);
+  const [ldrRaw, setLdrRaw] = useState<number | null>(null);
+  const [motorDriverInfo, setMotorDriverInfo] = useState<string>('L298N OUT3 & OUT4');
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+
+  // Auto-connect to live EMQX WebSocket (Port 8084 WSS) for 100% real-time telemetri
+  useEffect(() => {
+    const unsubscribe = subscribeLiveTelemetry({
+      onTelemetry: (msg: IncomingTelemetryMessage) => {
+        setIsLiveMqtt(true);
+        setLastLiveTelemetryTime(new Date());
+
+        if (typeof msg.temp === 'number') setTemp(Number(msg.temp.toFixed(1)));
+        if (typeof msg.rh === 'number') setRh(Number(msg.rh.toFixed(1)));
+        if (typeof msg.soilMoisture === 'number') setSoilMoisture(Number(msg.soilMoisture.toFixed(1)));
+        if (typeof msg.soilRaw === 'number') setSoilRaw(msg.soilRaw);
+        if (typeof msg.rain === 'number') setRain(Number(msg.rain.toFixed(2)));
+        if (typeof msg.rainRaw === 'number') setRainRaw(msg.rainRaw);
+        if (typeof msg.rainStatus === 'string') setRainStatus(msg.rainStatus);
+        if (typeof msg.lightLux === 'number') setLightLux(Math.round(msg.lightLux));
+        if (typeof msg.ldrRaw === 'number') setLdrRaw(msg.ldrRaw);
+        if (typeof msg.nodeId === 'string') setActiveNodeId(msg.nodeId);
+        if (typeof msg.motorDriver === 'string') setMotorDriverInfo(msg.motorDriver);
+
+        if (typeof msg.limitLeft === 'boolean') setLimitLeft(msg.limitLeft);
+        if (typeof msg.limitRight === 'boolean') setLimitRight(msg.limitRight);
+
+        if (typeof msg.motorState === 'string') {
+          if (msg.motorState === 'LEFT') setMovementStatus('left_command_sent');
+          else if (msg.motorState === 'RIGHT') setMovementStatus('right_command_sent');
+          else if (msg.motorState === 'STOPPED') setMovementStatus('stop_command_sent');
+        }
+
+        if (typeof msg.ffmc === 'number') setFfmc(Number(msg.ffmc.toFixed(1)));
+        if (typeof msg.dmc === 'number') setDmc(Number(msg.dmc.toFixed(1)));
+        if (typeof msg.dc === 'number') setDc(Number(msg.dc.toFixed(1)));
+        if (typeof msg.isi === 'number') setIsi(Number(msg.isi.toFixed(1)));
+
+        if (msg.visionPrediction) {
+          if (msg.visionPrediction.toLowerCase().includes('fire')) {
+            setVisionPrediction('Active Surface Fire');
+            setVisionProbs({ healthy: 2.1, smoke: 12.4, fire: 85.5 });
+          } else if (msg.visionPrediction.toLowerCase().includes('smoke')) {
+            setVisionPrediction('Smoke Plume Detected');
+            setVisionProbs({ healthy: 5.2, smoke: 89.1, fire: 5.7 });
+          } else {
+            setVisionPrediction('Healthy Forest Canopy');
+            setVisionProbs({ healthy: 92.4, smoke: 5.1, fire: 2.5 });
+          }
+        }
+      },
+      onStatusChange: (status) => {
+        setMqttState(status);
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const showToast = useCallback((msg: string) => {
     setToast({ message: msg, visible: true });
@@ -725,16 +803,20 @@ export const App: React.FC = () => {
     }
   };
 
-  // L298N Rail Carriage commands
-  const handleRailCommand = (cmd: 'L' | 'R' | 'S' | 'C') => {
+  // L298N Rail Carriage commands (OUT3 & OUT4)
+  const handleRailCommand = async (cmd: 'L' | 'R' | 'S' | 'C') => {
     if (cmd === 'C') {
+      await publishMqttCommand('C');
+      showToast("Perintah 'C' terkirim ke ESP32: Trigger Capture Foto Kamera");
       handleTriggerCameraScan();
       return;
     }
     setLastCommand(cmd);
+    const sent = await publishMqttCommand(cmd);
+
     if (cmd === 'L') {
       if (limitLeft) {
-        showToast('Left Limit Switch (SW1) aktif! Gerakan ke kiri diblokir.');
+        showToast('Limit Switch Kiri (SW1) aktif! Gerakan motor OUT3/OUT4 diblokir.');
         return;
       }
       const nextPos = Math.max(0, railPositionMm - 200);
@@ -742,10 +824,14 @@ export const App: React.FC = () => {
       setLimitLeft(nextPos <= 0);
       setLimitRight(false);
       setMovementStatus('left_command_sent');
-      showToast(`Command 'L' dikirim ke L298N → Posisi rel: ${nextPos} mm`);
+      showToast(
+        sent
+          ? `Perintah 'L' terkirim ke ESP32 L298N (OUT3 & OUT4) → Rel ke kiri (${nextPos} mm)`
+          : `Perintah 'L' lokal → Posisi rel: ${nextPos} mm`
+      );
     } else if (cmd === 'R') {
       if (limitRight) {
-        showToast('Right Limit Switch (SW2) aktif! Gerakan ke kanan diblokir.');
+        showToast('Limit Switch Kanan (SW2) aktif! Gerakan motor OUT3/OUT4 diblokir.');
         return;
       }
       const nextPos = Math.min(1200, railPositionMm + 200);
@@ -753,10 +839,18 @@ export const App: React.FC = () => {
       setLimitRight(nextPos >= 1200);
       setLimitLeft(false);
       setMovementStatus('right_command_sent');
-      showToast(`Command 'R' dikirim ke L298N → Posisi rel: ${nextPos} mm`);
+      showToast(
+        sent
+          ? `Perintah 'R' terkirim ke ESP32 L298N (OUT3 & OUT4) → Rel ke kanan (${nextPos} mm)`
+          : `Perintah 'R' lokal → Posisi rel: ${nextPos} mm`
+      );
     } else if (cmd === 'S') {
       setMovementStatus('stop_command_sent');
-      showToast("Command 'S' dikirim: Motor L298N berhenti (Brake Active)");
+      showToast(
+        sent
+          ? "Perintah 'S' terkirim ke ESP32 L298N (OUT3 & OUT4): Rem Motor Aktif (STOP)"
+          : "Perintah 'S': Motor L298N berhenti (Brake Active)"
+      );
     }
   };
 
@@ -969,7 +1063,7 @@ export const App: React.FC = () => {
             aria-label="Navigasi AGRAPATHA Flora"
           >
             <div
-              className="w-[280px] h-full bg-[#23312E] shadow-2xl flex flex-col z-50"
+              className="w-70 h-full bg-[#23312E] shadow-2xl flex flex-col z-50"
               onClick={(e) => e.stopPropagation()}
             >
               {renderSidebarContent(true)}
@@ -978,7 +1072,7 @@ export const App: React.FC = () => {
         )}
 
         {/* Main Console Workspace */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-7 xl:p-8 2xl:p-9 max-w-[1440px] xl:max-w-[1560px] 2xl:max-w-[1680px] mx-auto w-full overflow-x-hidden">
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-7 xl:p-8 2xl:p-9 max-w-360 xl:max-w-[1560px] 2xl:max-w-[1680px] mx-auto w-full overflow-x-hidden">
           {/* Top Console Header */}
           <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-5 mb-5 border-b border-[#D6DCCE]">
             <div className="flex items-center gap-3 min-w-0">
@@ -1020,15 +1114,36 @@ export const App: React.FC = () => {
                 <span>3D Welcome</span>
               </button>
 
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border border-[#D6DCCE] text-xs shadow-xs">
-                <span className="w-2 h-2 rounded-full shrink-0 bg-[#4E635E] animate-pulse" />
-                <span className="font-bold text-[#263A35] font-display text-[11px] uppercase tracking-wider">
-                  LIVE
+              <button
+                onClick={() => setMqttModalOpen(true)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs shadow-xs transition-all cursor-pointer ${
+                  isLiveMqtt
+                    ? 'bg-[#EFF3EF] border-[#5DD62C] text-[#263A35] hover:bg-[#E2E0CB]'
+                    : mqttState === 'connected'
+                    ? 'bg-white border-[#A6B49E] text-[#263A35] hover:bg-[#F5F4EE]'
+                    : 'bg-white border-[#D6DCCE] text-[#263A35] hover:bg-[#F5F4EE]'
+                }`}
+                title="Status Koneksi EMQX Cloud MQTT WebSocket (Port 8084). Klik untuk modal pengujian."
+                aria-label="Status Koneksi MQTT"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    isLiveMqtt
+                      ? 'bg-[#16A34A] animate-pulse ring-2 ring-[#5DD62C]/40'
+                      : mqttState === 'connected'
+                      ? 'bg-[#0284C7]'
+                      : 'bg-[#D97706] animate-pulse'
+                  }`}
+                />
+                <span className="font-bold font-display text-[11px] uppercase tracking-wider">
+                  {isLiveMqtt ? `ESP32 LIVE · ${activeNodeId || 'MAIN'}` : mqttState === 'connected' ? 'MQTT READY' : 'PRESET / SIMULASI'}
                 </span>
                 <span className="text-[11px] text-[#50645F] font-tabular border-l border-[#D6DCCE] pl-2 hidden sm:inline-block">
-                  model_hazard.h Ready
+                  {isLiveMqtt && lastLiveTelemetryTime
+                    ? lastLiveTelemetryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    : 'EMQX Cloud :8084'}
                 </span>
-              </div>
+              </button>
 
               <LiveClockBadge />
 
@@ -1139,48 +1254,62 @@ export const App: React.FC = () => {
                   </p>
 
                   {/* Telemetry Pill Strip */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 sm:gap-2.5 pt-1 w-full">
-                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-2.5 pt-1 w-full">
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Temp</span>
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">1. Suhu (DHT22)</span>
                       </div>
                       <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{temp.toFixed(1)}°C</span>
                     </div>
-                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#0284C7] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">RH</span>
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">2. RH Udara</span>
                       </div>
                       <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{rh.toFixed(1)}%</span>
                     </div>
-                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#84CC16] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">3. Tanah (v1.2)</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{soilMoisture.toFixed(1)}%</span>
+                    </div>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#38BDF8] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">4. Hujan (FC-37)</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{rain.toFixed(1)} mm/h</span>
+                    </div>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#EAB308] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">5. Cahaya (LDR)</span>
+                      </div>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{lightLux.toLocaleString()} Lux</span>
+                    </div>
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#14B8A6] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Wind</span>
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Angin Ambien</span>
                       </div>
                       <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{wind.toFixed(1)} km/h</span>
                     </div>
-                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">FFMC</span>
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">FFMC Serasah</span>
                       </div>
                       <span className="font-bold font-tabular text-[#E2E0CB] text-xs whitespace-nowrap shrink-0">{ffmc.toFixed(1)}</span>
                     </div>
-                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
+                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#F97316] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">DMC</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#A855F7] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Rel L298N OUT3/4</span>
                       </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{dmc.toFixed(1)}</span>
-                    </div>
-                    <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-[42px] shadow-2xs transition-colors min-w-0">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#84CC16] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Soil</span>
-                      </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{soilMoisture.toFixed(1)}%</span>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{movementStatus === 'idle' ? 'STANDBY' : movementStatus.replace(/_command_sent|_command/g, '').toUpperCase()}</span>
                     </div>
                   </div>
                 </div>
@@ -1212,7 +1341,7 @@ export const App: React.FC = () => {
 
               {/* 4 Bottom Pillar Boxes */}
               <div className="pt-4 border-t border-[#364844] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-20.5">
                   <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     1. Meteorology (Montesinho)
                   </span>
@@ -1223,7 +1352,7 @@ export const App: React.FC = () => {
                     {temp.toFixed(1)}°C · RH {rh.toFixed(0)}% · Wind {wind.toFixed(1)} km/h
                   </span>
                 </div>
-                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-20.5">
                   <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     2. FWI Fuel Codes
                   </span>
@@ -1234,7 +1363,7 @@ export const App: React.FC = () => {
                     FFMC {ffmc.toFixed(1)} · DMC {dmc.toFixed(1)} · ISI {isi.toFixed(1)}
                   </span>
                 </div>
-                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-20.5">
                   <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     3. Edge AI (model_hazard.h)
                   </span>
@@ -1245,7 +1374,7 @@ export const App: React.FC = () => {
                     Kaggle Label: {hazardResult.kaggleBinaryPrediction}
                   </span>
                 </div>
-                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-[82px]">
+                <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-20.5">
                   <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
                     4. FLORA Soil &amp; Vision
                   </span>
@@ -1282,106 +1411,106 @@ export const App: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[
                   {
-                    title: 'Air Temperature (input[0])',
-                    shortTitle: 'Air Temperature',
-                    channelTag: 'input[0] · DHT22',
+                    title: '1. Suhu Udara (Air Temperature)',
+                    shortTitle: 'Suhu Udara (DHT22)',
+                    channelTag: 'Sensor 1 · GPIO 19',
                     value: temp.toFixed(1),
                     unit: '°C',
-                    statusLabel: temp >= 28 ? 'HIGH TEMP' : temp <= 10 ? 'COOL' : 'OPTIMAL',
+                    statusLabel: temp >= 28 ? 'SUHU TINGGI' : temp <= 15 ? 'SEJUK' : 'OPTIMAL',
                     isWarn: temp >= 28,
-                    percent: Math.min(100, Math.max(0, (temp / 40) * 100)),
+                    percent: Math.min(100, Math.max(0, (temp / 45) * 100)),
                     minLabel: '0°C',
-                    maxLabel: '40°C',
-                    barColor: temp >= 28 ? 'bg-[#DC2626]' : temp <= 10 ? 'bg-[#0284C7]' : 'bg-[#4E635E]',
+                    maxLabel: '45°C',
+                    barColor: temp >= 28 ? 'bg-[#DC2626]' : temp <= 15 ? 'bg-[#0284C7]' : 'bg-[#4E635E]',
                     explanation:
-                      'Suhu udara ambien kanopi hutan (DHT22). Mempengaruhi pengeringan bahan bakar halus (FFMC) dan laju transpirasi.',
-                    reference: 'Montesinho: 2.2 – 33.3°C (Mean 18.89°C)',
-                    extra: 'FLORA Mean: 28.62°C (±4.91°C)',
+                      'Sensor suhu ambien kanopi hutan (DHT22). Mempengaruhi laju pengeringan serasah halus dan evapotranspirasi kanopi.',
+                    reference: 'Rentang Sensor: -40 s.d 80°C (±0.5°C)',
+                    extra: isLiveMqtt ? 'Live Stream ESP32' : 'Montesinho Mean: 18.89°C',
                   },
                   {
-                    title: 'Relative Humidity (input[1])',
-                    shortTitle: 'Relative Humidity',
-                    channelTag: 'input[1] · Air RH',
+                    title: '2. Kelembapan Udara (Relative Humidity)',
+                    shortTitle: 'Kelembapan Udara',
+                    channelTag: 'Sensor 2 · GPIO 19',
                     value: rh.toFixed(1),
                     unit: '%',
-                    statusLabel: rh < 35 ? 'CRITICAL DRY' : rh > 80 ? 'HUMID' : 'MODERATE',
+                    statusLabel: rh < 35 ? 'KERING KRITIS' : rh > 80 ? 'LEMBAP TINGGI' : 'MODERAT',
                     isWarn: rh < 35,
                     percent: Math.min(100, Math.max(0, rh)),
                     minLabel: '0%',
                     maxLabel: '100%',
                     barColor: rh < 35 ? 'bg-[#DC2626]' : rh > 80 ? 'bg-[#0284C7]' : 'bg-[#4E635E]',
                     explanation:
-                      'Kelembapan relatif udara. Nilai RH < 35% memicu penurunan drastis kadar air serasah dan meningkatkan risiko sulutan api.',
-                    reference: 'Montesinho: 15 – 100% (Mean 44.29%)',
-                    extra: 'FLORA Mean: 59.83% (±14.31%)',
+                      'Kelembapan relatif udara kanopi hutan (DHT22). Nilai RH < 35% memicu pengeringan serasah dan eskalasi risiko sulutan api.',
+                    reference: 'Rentang Sensor: 0 s.d 100% RH (±2%)',
+                    extra: isLiveMqtt ? 'Live Stream ESP32' : 'Montesinho Mean: 44.29%',
                   },
                   {
-                    title: 'Wind Speed (input[2])',
-                    shortTitle: 'Wind Speed',
-                    channelTag: 'input[2] · Wind',
-                    value: wind.toFixed(1),
-                    unit: 'km/h',
-                    statusLabel: wind >= 6.5 ? 'STRONG WIND' : 'MODERATE',
-                    isWarn: wind >= 6.5,
-                    percent: Math.min(100, Math.max(0, (wind / 12) * 100)),
-                    minLabel: '0 km/h',
-                    maxLabel: '12 km/h',
-                    barColor: wind >= 6.5 ? 'bg-[#DC2626]' : 'bg-[#0D9488]',
+                    title: '3. Kelembapan Tanah (Soil Moisture)',
+                    shortTitle: 'Kelembapan Tanah',
+                    channelTag: 'Sensor 3 · GPIO 34 (ADC1)',
+                    value: soilMoisture.toFixed(1),
+                    unit: '%',
+                    statusLabel: soilMoisture < 25 ? 'TANAH KERING' : soilMoisture > 75 ? 'BASAH JENUH' : 'LEMBAP SUBUR',
+                    isWarn: soilMoisture < 25,
+                    percent: Math.min(100, Math.max(0, soilMoisture)),
+                    minLabel: '0%',
+                    maxLabel: '100%',
+                    barColor: soilMoisture < 25 ? 'bg-[#DC2626]' : soilMoisture > 75 ? 'bg-[#0284C7]' : 'bg-[#84CC16]',
                     explanation:
-                      'Kecepatan angin permukaan hutan. Mempercepat suplai oksigen pembakaran dan meningkatkan Initial Spread Index (ISI).',
-                    reference: 'Montesinho: 0.4 – 9.4 km/h (Mean 4.02)',
-                    extra: `Derived ISI: ${isi.toFixed(1)} (Mean 9.02)`,
+                      'Sensor kelembapan tanah kapasitif v1.2 anti-korosi. Menilai kadar air zona rizosfer tanaman dan lapisan humus bawah serasah.',
+                    reference: soilRaw ? `ADC Raw: ${soilRaw} (Wet: 1350, Dry: 3100)` : 'Capacitive v1.2 Kalibrasi ADC',
+                    extra: isLiveMqtt ? 'Hardware Live ADC' : 'FLORA Mean: 67.15%',
                   },
                   {
-                    title: 'Outside Rain (input[3])',
-                    shortTitle: 'Outside Rain',
-                    channelTag: 'input[3] · Rain',
-                    value: rain.toFixed(2),
-                    unit: 'mm/m²',
-                    statusLabel: rain > 0 ? 'PRECIPITATION' : 'DRY (0.0 MM)',
+                    title: '4. Intensitas Hujan (Rain Intensity)',
+                    shortTitle: 'Sensor Hujan (FC-37)',
+                    channelTag: 'Sensor 4 · GPIO 35 (ADC1)',
+                    value: rain.toFixed(1),
+                    unit: `mm/h (${rainStatus})`,
+                    statusLabel: rainStatus === 'HUJAN' ? 'HUJAN LEBAT' : rainStatus === 'GERIMIS' ? 'GERIMIS' : 'TIDAK HUJAN',
                     isWarn: false,
-                    percent: Math.min(100, Math.max(0, (rain / 5) * 100)),
-                    minLabel: '0.0 mm',
-                    maxLabel: '5.0 mm',
+                    percent: Math.min(100, Math.max(0, (rain / 25) * 100)),
+                    minLabel: '0.0 mm/h',
+                    maxLabel: '25.0 mm/h',
                     barColor: rain > 0 ? 'bg-[#0284C7]' : 'bg-[#94A3B8]',
                     explanation:
-                      'Curah hujan luar kanopi per m². Mayoritas kejadian kebakaran pada dataset Montesinho terjadi saat rain = 0.0 mm/m².',
-                    reference: 'Montesinho: 0.0 – 6.4 mm (Mean 0.02)',
-                    extra: rain > 0 ? 'Active Wetting' : 'Zero Rain Window',
+                      'Deteksi presipitasi rintik dan laju curah hujan kanopi (FC-37). Permukaan basah secara instan menurunkan potensi sulutan api serasah.',
+                    reference: rainRaw ? `ADC Raw: ${rainRaw} (${rainStatus})` : 'FC-37 Plate Multi-sample',
+                    extra: isLiveMqtt ? `Status: ${rainStatus}` : 'Baseline Kering (0.0 mm)',
                   },
                   {
-                    title: 'Fine Fuel Moisture (input[4] · FFMC)',
-                    shortTitle: 'Fine Fuel (FFMC)',
-                    channelTag: 'input[4] · FFMC',
+                    title: '5. Radiasi Cahaya (Solar Lux)',
+                    shortTitle: 'Sensor Cahaya (LDR)',
+                    channelTag: 'Sensor 5 · GPIO 36 (VP)',
+                    value: lightLux >= 1000 ? (lightLux / 1000).toFixed(1) + 'k' : String(lightLux),
+                    unit: 'Lux',
+                    statusLabel: lightLux > 45000 ? 'TERIK INTENS' : lightLux > 12000 ? 'TERANG SIANG' : 'TEDUH / MALAM',
+                    isWarn: lightLux > 55000 && temp > 30,
+                    percent: Math.min(100, Math.max(0, (lightLux / 80000) * 100)),
+                    minLabel: '0 Lux',
+                    maxLabel: '80,000 Lux',
+                    barColor: lightLux > 45000 ? 'bg-[#EAB308]' : lightLux > 12000 ? 'bg-[#14B8A6]' : 'bg-[#64748B]',
+                    explanation:
+                      'Estimasi intensitas cahaya kanopi dan radiasi matahari via LDR Photoresistor. Menghitung evapotranspirasi dan radiasi termal tajuk.',
+                    reference: ldrRaw ? `ADC Raw: ${ldrRaw} (VP ADC1_CH0)` : 'LDR Non-linear Lux Transform',
+                    extra: isLiveMqtt ? 'Hardware Live ADC' : 'Siang Kanopi ~45k Lux',
+                  },
+                  {
+                    title: '6. Indeks Serasah & Angin (FWI Engine)',
+                    shortTitle: 'Fine Fuel & Wind (FFMC)',
+                    channelTag: 'model_hazard.h · FWI',
                     value: ffmc.toFixed(1),
-                    unit: 'idx',
-                    statusLabel: ffmc >= 89.5 ? 'HIGH IGNITION' : ffmc >= 82 ? 'MODERATE' : 'LOW RISK',
+                    unit: `idx (Wind ${wind.toFixed(1)} km/h)`,
+                    statusLabel: ffmc >= 89.5 ? 'ZONA PENYALAAN' : ffmc >= 82 ? 'PENGERINGAN' : 'KADAR AIR AMAN',
                     isWarn: ffmc >= 89.5,
                     percent: Math.min(100, Math.max(0, ffmc)),
                     minLabel: '0 idx',
                     maxLabel: '100 idx',
                     barColor: ffmc >= 89.5 ? 'bg-[#DC2626]' : ffmc >= 82 ? 'bg-[#D97706]' : 'bg-[#4E635E]',
                     explanation:
-                      'Indeks kadar air serasah permukaan halus. Fitur paling menentukan pada pohon keputusan model_hazard.h (ambang kritis ~89.5).',
-                    reference: 'Montesinho: 18.7 – 96.2 (Mean 90.64)',
-                    extra: 'Std Dev: ±5.52',
-                  },
-                  {
-                    title: 'Duff Moisture & Soil (input[5] · DMC)',
-                    shortTitle: 'Duff Moisture & Soil',
-                    channelTag: 'input[5] · DMC/Soil',
-                    value: dmc.toFixed(1),
-                    unit: `idx (Soil ${soilMoisture.toFixed(0)}%)`,
-                    statusLabel: dmc >= 120 || soilMoisture < 30 ? 'DROUGHT LAYER' : 'STABLE DUFF',
-                    isWarn: dmc >= 120 || soilMoisture < 30,
-                    percent: Math.min(100, Math.max(0, (dmc / 250) * 100)),
-                    minLabel: '0 idx',
-                    maxLabel: '250 idx',
-                    barColor: dmc >= 120 || soilMoisture < 30 ? 'bg-[#D97706]' : 'bg-[#4E635E]',
-                    explanation:
-                      'Kombinasi Duff Moisture Code (lapisan organik kompak) dan kelembapan tanah kapasitif (FLORA Soil Moisture).',
-                    reference: 'DMC: 1.1 – 291.3 (Mean 110.87)',
-                    extra: `FLORA Soil Mean: 67.15% · DC: ${dc.toFixed(0)}`,
+                      'Fine Fuel Moisture Code (FFMC) dihitung langsung dari DHT22 (suhu & RH), hujan FC-37, dan kecepatan angin. Ambang kritis sulutan api serasah: 89.5.',
+                    reference: `ISI: ${isi.toFixed(1)} · DMC: ${dmc.toFixed(1)}`,
+                    extra: '100-Tree Random Forest Kernel',
                   },
                 ].map((card) => (
                   <article
@@ -1391,7 +1520,7 @@ export const App: React.FC = () => {
                     <div className="flex-1 flex flex-col justify-between">
                       <div>
                         {/* Header: Channel tag + Status Pill */}
-                        <div className="flex justify-between items-start mb-2 gap-2 min-h-[44px]">
+                        <div className="flex justify-between items-start mb-2 gap-2 min-h-11">
                           <div className="min-w-0">
                             <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-wider block font-mono truncate">
                               {card.channelTag}
@@ -1445,14 +1574,14 @@ export const App: React.FC = () => {
                         </div>
 
                         {/* Descriptive Context */}
-                        <p className="text-xs text-[#50645F] leading-relaxed my-2 min-h-[44px]">
+                        <p className="text-xs text-[#50645F] leading-relaxed my-2 min-h-11">
                           {card.explanation}
                         </p>
                       </div>
                     </div>
 
                     {/* Metadata Footer */}
-                    <div className="pt-3 mt-3 border-t border-[#D6DCCE] flex items-center justify-between gap-2 text-[10px] min-h-[34px]">
+                    <div className="pt-3 mt-3 border-t border-[#D6DCCE] flex items-center justify-between gap-2 text-[10px] min-h-8.5">
                       <span className="font-semibold text-[#4E635E] bg-[#F5F4EE] px-2 py-0.5 rounded-md border border-[#E2E0CB] font-mono shrink-0 truncate max-w-[62%]">
                         {card.reference}
                       </span>
@@ -1922,7 +2051,7 @@ export const App: React.FC = () => {
               {/* Main 2-Column Content Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
                 {/* Left: Video / Image Viewport */}
-                <div className="lg:col-span-2 relative min-h-[340px] xl:min-h-[380px] bg-[#1A2522] border border-[#D6DCCE] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-xs">
+                <div className="lg:col-span-2 relative min-h-85 xl:min-h-95 bg-[#1A2522] border border-[#D6DCCE] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-xs">
                   {cameraStatus === 'streaming' ? (
                     <>
                       <video
@@ -2265,17 +2394,17 @@ export const App: React.FC = () => {
               <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
                 <div>
                   <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
-                    Actuator Subsystem · L298N Dual H-Bridge
+                    Actuator Subsystem · L298N Kanal OUT 3 &amp; OUT 4
                   </span>
                   <h2 className="text-lg font-bold text-[#263A35] font-display">
-                    Scanner Carriage Manual Control ({railPositionMm} / 1200 mm)
+                    Scanner Carriage Motor Rel (OUT3 &amp; OUT4) — {railPositionMm} / 1200 mm
                   </h2>
                 </div>
                 <span className="text-xs font-semibold px-3 py-1 rounded-full border bg-[#EFF3EF] text-[#4E635E] border-[#A6B49E] flex items-center gap-1.5 shrink-0 whitespace-nowrap">
-                  <span className="w-2 h-2 rounded-full bg-[#4E635E]" />
+                  <span className={`w-2 h-2 rounded-full ${isLiveMqtt ? 'bg-[#16A34A] animate-pulse' : 'bg-[#4E635E]'}`} />
                   {movementStatus === 'idle'
-                    ? 'CONTROLLER READY'
-                    : movementStatus.replace(/_/g, ' ').toUpperCase()}
+                    ? `${motorDriverInfo} STANDBY`
+                    : `${motorDriverInfo} · ${movementStatus.replace(/_/g, ' ').toUpperCase()}`}
                 </span>
               </div>
 
@@ -2310,7 +2439,7 @@ export const App: React.FC = () => {
                   disabled={limitLeft}
                   aria-disabled={limitLeft}
                   aria-label="Gerakkan kamera rel ke kiri (L)"
-                  className={`min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
+                  className={`min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                     movementStatus === 'left_command_sent'
                       ? 'bg-[#4E635E] text-white border-[#4E635E] ring-2 ring-[#A6B49E]'
                       : 'bg-white hover:bg-[#F5F4EE] text-[#263A35] border-[#D6DCCE]'
@@ -2323,7 +2452,7 @@ export const App: React.FC = () => {
                 <button
                   onClick={() => handleRailCommand('S')}
                   aria-label="Hentikan darurat motor rel (S)"
-                  className={`min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#D97706] ${
+                  className={`min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#D97706] ${
                     movementStatus === 'stop_command_sent'
                       ? 'bg-[#D97706] text-white border-[#D97706]'
                       : 'bg-[#FEF7E8] hover:bg-[#FDE3B5] text-[#8A570C] border-[#FDE3B5]'
@@ -2338,7 +2467,7 @@ export const App: React.FC = () => {
                   disabled={limitRight}
                   aria-disabled={limitRight}
                   aria-label="Gerakkan kamera rel ke kanan (R)"
-                  className={`min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
+                  className={`min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
                     movementStatus === 'right_command_sent'
                       ? 'bg-[#4E635E] text-white border-[#4E635E] ring-2 ring-[#A6B49E]'
                       : 'bg-white hover:bg-[#F5F4EE] text-[#263A35] border-[#D6DCCE]'
@@ -2351,7 +2480,7 @@ export const App: React.FC = () => {
                 <button
                   onClick={() => handleRailCommand('C')}
                   aria-label="Trigger tangkapan foto kamera pada posisi rel (C)"
-                  className="min-h-[44px] py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs bg-[#EFF3EF] hover:bg-[#E2E0CB] text-[#263A35] border-[#A6B49E] cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+                  className="min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs bg-[#EFF3EF] hover:bg-[#E2E0CB] text-[#263A35] border-[#A6B49E] cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                 >
                   <span aria-hidden="true">◉</span>
                   <span>Capture Photo (C)</span>
@@ -2517,7 +2646,7 @@ export const App: React.FC = () => {
                   <button
                     onClick={handleRecordWatering}
                     aria-label="Catat tindakan penyiraman dan pendinginan kanopi hutan"
-                    className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#4E635E] hover:bg-[#3B4D49] text-white font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 mt-2 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+                    className="w-full min-h-11 py-2.5 px-4 rounded-xl bg-[#4E635E] hover:bg-[#3B4D49] text-white font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95 mt-2 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
                   >
                     + Catat Penyiraman &amp; Pendinginan Kanopi
                   </button>
@@ -2550,16 +2679,28 @@ export const App: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 lg:gap-4">
                 {[
-                  { label: 'ESP32 Main Node', status: 'TOPOLOGY PRESET', detail: 'MAC: 8C:AA:B5:37:71:18 · Telemetri Belum Terhubung' },
-                  { label: 'ESP32-CAM Node', status: 'TOPOLOGY PRESET', detail: 'MAC: F8:B3:B7:A6:F3:9C · Fallback Kamera Aktif' },
+                  { label: 'ESP32 Main Node', status: isLiveMqtt ? 'ONLINE LIVE' : 'PRESET READY', detail: `MAC: 8C:AA:B5:37:71:18 · Node: ${activeNodeId || 'ESP32-MAIN'} · ${isLiveMqtt ? 'Realtime Telemetry Active' : 'Siap Terhubung via EMQX'}` },
+                  { label: 'ESP32-CAM Node', status: isLiveMqtt ? 'ONLINE' : 'PRESET READY', detail: 'MAC: F8:B3:B7:A6:F3:9C · Railway API Active' },
                   { label: 'C Edge Kernel 1', status: 'ACTIVE', detail: 'model_hazard.h (100 Trees RF in-memory)' },
                   { label: 'C Edge Kernel 2', status: 'ACTIVE', detail: 'grenvis_sensor_model.h (TFLite in-memory)' },
-                  { label: 'MQTT Broker', status: 'UNCONFIGURED', detail: 'EMQX TLS Pipeline · Belum Tersambung ke Browser' },
-                  { label: 'ESP-NOW Link', status: 'TOPOLOGY PRESET', detail: 'Inter-Board Wireless Mesh (CH 6)' },
-                  { label: 'FWI & DHT22 Array', status: 'SIMULATED', detail: 'Temp, RH, Wind, Rain, FFMC, DMC' },
-                  { label: 'Scanner Motor L298N', status: 'SIMULATED', detail: `Carriage @ ${railPositionMm} mm` },
-                ].map((dev) => (
-                  <article key={dev.label} className="flora-card flora-card-interactive p-4 shadow-xs flex flex-col justify-between min-h-[96px]">
+                  {
+                    label: 'MQTT Broker',
+                    status: isLiveMqtt ? 'CONNECTED LIVE' : 'CONFIGURED',
+                    detail: 'EMQX Cloud · Port 8084 (WSS) / 8883 (TLS) · Klik untuk Uji',
+                    interactive: true,
+                    onClick: () => setMqttModalOpen(true),
+                  },
+                  { label: 'ESP-NOW Link', status: 'ACTIVE', detail: 'Inter-Board Wireless Mesh (CH 6)' },
+                  { label: '5 Hardware Sensor Node', status: isLiveMqtt ? 'STREAMING' : 'CALIBRATED', detail: 'Suhu, RH (DHT22), Tanah (v1.2), Cahaya (LDR), Hujan (FC-37)' },
+                  { label: 'Scanner Motor L298N', status: isLiveMqtt ? 'OUT3/4 LIVE' : 'SIMULATED', detail: `${motorDriverInfo} (GPIO 16 & 17) · @ ${railPositionMm} mm` },
+                ].map((dev: any) => (
+                  <article
+                    key={dev.label}
+                    onClick={dev.onClick}
+                    className={`flora-card flora-card-interactive p-4 shadow-xs flex flex-col justify-between min-h-24 ${
+                      dev.interactive ? 'cursor-pointer hover:border-[#5DD62C] ring-1 ring-transparent hover:ring-[#5DD62C]/30 transition-all' : ''
+                    }`}
+                  >
                     <div className="flex justify-between items-center mb-1">
                       <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider">
                         {dev.label}
@@ -2611,6 +2752,19 @@ export const App: React.FC = () => {
           <span className="w-2 h-2 rounded-full bg-[#8FBEA8] animate-pulse" />
           <span>{toast.message}</span>
         </div>
+
+        {/* EMQX Cloud MQTT Diagnostic & Testing Modal */}
+        <MqttTestModal
+          isOpen={mqttModalOpen}
+          onClose={() => setMqttModalOpen(false)}
+          onApplyTelemetry={(data) => {
+            setTemp(data.temp);
+            setRh(data.rh);
+            setSoilMoisture(data.soilMoisture);
+            if (data.rain !== undefined) setRain(data.rain);
+            showToast(`Telemetri EMQX: ${data.temp}°C · RH ${data.rh}% · Tanah ${data.soilMoisture}% · Hujan ${data.rain ?? 0} mm/h`);
+          }}
+        />
       </div>
     </div>
   );

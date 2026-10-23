@@ -11,8 +11,6 @@ import type {
   WildfirePredictionResponse,
 } from '../types/vision';
 
-const DEFAULT_WILDFIRE_API_URL = 'https://tes-tflite-production.up.railway.app';
-
 function getEnvVar(key: string): string | undefined {
   try {
     if (typeof import.meta !== 'undefined' && (import.meta as unknown as { env?: Record<string, string> }).env) {
@@ -34,12 +32,14 @@ function getEnvVar(key: string): string | undefined {
   return undefined;
 }
 
+import { getIotConfig } from '../config/iotConfig.ts';
+
 export function getWildfireApiBaseUrl(): string {
   const envUrl = getEnvVar('VITE_VISION_API_BASE_URL');
   if (typeof envUrl === 'string' && envUrl.trim().length > 0) {
     return envUrl.trim().replace(/\/+$/, '');
   }
-  return DEFAULT_WILDFIRE_API_URL;
+  return getIotConfig().railway.wildfireUrl;
 }
 
 /**

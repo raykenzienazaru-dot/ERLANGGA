@@ -37,12 +37,14 @@ function getEnvVar(key: string): string | undefined {
   return undefined;
 }
 
+import { getIotConfig } from '../config/iotConfig.ts';
+
 export function getLeafDiseaseApiBaseUrl(): string | null {
   const envUrl = getEnvVar('VITE_LEAF_API_BASE_URL');
   if (typeof envUrl === 'string' && envUrl.trim().length > 0) {
     return envUrl.trim().replace(/\/+$/, '');
   }
-  return null;
+  return getIotConfig().railway.leafUrl;
 }
 
 export function isLeafDiseaseApiConfigured(): boolean {

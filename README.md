@@ -72,23 +72,37 @@ When an ESP32-CAM hardware stream is unavailable or unverified, the browser-base
 
 ---
 
-## 4. Hardware Telemetry & ESP32-CAM Status Audit
+## 4. Hardware Telemetry & EMQX MQTT Infrastructure
 
-- **Current State:** Physical ESP32-CAM video streaming and live MQTT telemetry (`MAC: F8:B3:B7:A6:F3:9C`) are currently **unverified preset topology nodes** in the frontend. There is no active MQTT broker connection or hardware polling agent running in the web browser.
-- **Independence:** The manual camera fallback operates completely independently of physical ESP32-CAM connectivity, allowing operators to capture photos directly via laptop or smartphone cameras at any time.
-- **Future Integration:** Connecting live hardware requires deploying an MQTT WebSocket bridge or ESP32-CAM HTTP MJPEG gateway before reporting hardware nodes as live.
+- **EMQX Broker Host:** `wfc1ec11.ala.asia-southeast1.emqxsl.com` (EMQX Cloud Serverless Cluster)
+- **Port Adaptation:**
+  - **Browser Dashboard (WSS):** Port `8084` (`wss://wfc1ec11.ala.asia-southeast1.emqxsl.com:8084/mqtt`). Web browsers cannot establish direct TCP connections to port 8883 due to sandbox restrictions, so WebSocket over TLS/SSL is required.
+  - **ESP32 Hardware & Node.js CLI (Native TLS):** Port `8883` (`mqtts://wfc1ec11.ala.asia-southeast1.emqxsl.com:8883`). Microcontrollers use native TCP with TLS encryption (configured via `firmware/esp32_emqx_config.h`).
+- **Topic Namespaces:**
+  - Telemetry Stream: `agrapatha/telemetry` (JSON sensor payload)
+  - Interlock & Carriage Commands: `agrapatha/commands`
+  - Health & Node Status: `agrapatha/status`
+- **Authentication:** EMQX Cloud requires Username/Password authentication (Password-Based Auth created in the EMQX Cloud Console).
 
 ---
 
-## 5. Environment Variables
+## 5. Zero-Config Configuration Architecture (No .env Required)
 
-Create `.env` in `agrapatha-dashboard/` based on `.env.example`:
+Proyek ini menggunakan arsitektur **Single Source of Truth (`src/config/iotConfig.ts`)** yang dirancang khusus untuk IoT:
+- **Zero-Config (Plug & Play):** Tidak membutuhkan file `.env` untuk berjalan. Saat repo di-clone dan dijalankan dengan `npm run dev`, dashboard langsung terhubung ke EMQX Cloud dan Railway API.
+- **Hardware Parity:** Konfigurasi web selaras 100% dengan firmware ESP32 (`firmware/esp32_emqx_config.h`).
+- **Runtime Persistence (LocalStorage):** Parameter broker atau kredensial dapat diedit langsung melalui modal UI di dashboard tanpa perlu restart server atau edit kode.
+- **Optional Env Fallback:** Jika variabel environment (`.env`) ada (misal di pipeline CI/CD), sistem tetap dapat membacanya sebagai prioritas.
 
-| Variable | Default Value | Description |
+| Parameter | Default (Out-of-the-Box) | Deskripsi |
 | :--- | :--- | :--- |
-| `VITE_VISION_API_BASE_URL` | `https://tes-tflite-production.up.railway.app` | Base URL for deployed Wildfire inference API |
-| `VITE_LEAF_API_BASE_URL` | `""` (Unconfigured) | Base URL for Leaf Disease inference API (`POST /api/v1/leaf/predict`) |
-| `VITE_BMKG_BASE_URL` | `""` (Direct BMKG) | Optional proxy URL for BMKG Regional Gateway |
+| `Broker Host` | `wfc1ec11.ala.asia-southeast1.emqxsl.com` | Host EMQX Cloud Serverless |
+| `Browser Port (WSS)` | `8084` | Port WebSocket aman untuk Web Dashboard |
+| `Hardware Port (TLS)` | `8883` | Port MQTTS TCP aman untuk ESP32 |
+| `Username / Password` | `grenvis_esp32` / `grenvis123` | Kredensial aktif EMQX Cloud |
+| `Wildfire API URL` | `https://tes-tflite-production.up.railway.app` | Backend FastAPI MobileNetV2 |
+| `Topic Telemetry` | `agrapatha/telemetry` & `grenvis/sensor/data` | Topik stream data sensor |
+| `Topic Control` | `agrapatha/commands` & `grenvis/device/control` | Topik kendali motor rel & trigger foto |
 
 ---
 
@@ -102,8 +116,11 @@ cd agrapatha-dashboard
 # Install dependencies
 npm install
 
-# Run automated unit tests (BMKG parser + Vision & Camera subsystems)
-node --experimental-strip-types --test src/lib/bmkgService.test.ts src/lib/visionService.test.ts
+# Run automated unit tests (BMKG parser + Vision + EMQX MQTT)
+npm test
+
+# Run EMQX Broker Diagnostics (Tests Port 8883 TLS & Port 8084 WSS)
+npm run test:mqtt
 
 # Run static linter
 npm run lint
