@@ -92,7 +92,7 @@ export interface LeafDiseaseHealthResponse {
 // 3. CAMERA & CAPTURE UI LIFECYCLE
 // ==========================================
 
-export type CaptureSource = 'none' | 'camera' | 'upload';
+export type CaptureSource = 'none' | 'camera' | 'upload' | 'gateway';
 
 export type CameraStatus = 
   | 'idle' 

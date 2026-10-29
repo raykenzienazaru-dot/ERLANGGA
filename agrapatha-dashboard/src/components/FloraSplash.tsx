@@ -501,7 +501,7 @@ export const FloraSplash: React.FC<FloraSplashProps> = ({ onComplete }) => {
                   </span>
                 </div>
                 <div className="font-jakarta-bold text-base sm:text-lg md:text-xl lg:text-2xl tracking-tight uppercase select-none mt-1 pl-1 animate-text-flora-color">
-                  AGRAPATHA · FLORA SYSTEM
+                  AGRAPATHA SYSTEM
                 </div>
                 <p className="text-xs sm:text-sm text-[#617253] max-w-md mt-3 pl-1 leading-relaxed">
                   Integrasi langsung <code className="text-[#597C00] font-mono font-bold">model_hazard.h</code> (100-Tree Random Forest) &amp; <code className="text-[#597C00] font-mono font-bold">grenvis_sensor_model.h</code> berbasis dataset Kaggle Montesinho (<strong className="text-[#1B2408]">517 sampel</strong>) dan FLORA Environmental Risk (<strong className="text-[#1B2408]">9.000 sampel</strong>).
@@ -567,7 +567,7 @@ export const FloraSplash: React.FC<FloraSplashProps> = ({ onComplete }) => {
         {/* Center Enter Button */}
         <div className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center pointer-events-auto">
           <div className="text-[10px] sm:text-[11px] font-jakarta-bold tracking-[0.25em] animate-text-flora-color uppercase select-none mb-1.5 text-center">
-            AGRAPATHA × FLORA INTELLIGENCE
+            AGRAPATHA INTELLIGENCE
           </div>
           <button
             onClick={handleEnterDashboard}

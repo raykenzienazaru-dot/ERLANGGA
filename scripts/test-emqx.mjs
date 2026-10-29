@@ -20,11 +20,23 @@ function getArg(flag, fallback) {
   return fallback;
 }
 
-const HOST = getArg('--host', process.env.VITE_MQTT_HOST || 'wfc1ec11.ala.asia-southeast1.emqxsl.com');
-const TLS_PORT = parseInt(getArg('--tls-port', process.env.VITE_MQTT_TCP_PORT || '8883'), 10);
-const WS_PORT = parseInt(getArg('--ws-port', process.env.VITE_MQTT_WS_PORT || '8084'), 10);
-const USERNAME = getArg('--username', process.env.VITE_MQTT_USERNAME || 'grenvis_esp32');
-const PASSWORD = getArg('--password', process.env.VITE_MQTT_PASSWORD || 'grenvis123');
+const HOST = getArg('--host', process.env.MQTT_HOST || process.env.VITE_MQTT_HOST || 'wfc1ec11.ala.asia-southeast1.emqxsl.com');
+const TLS_PORT = parseInt(getArg('--tls-port', process.env.MQTT_PORT || process.env.VITE_MQTT_TCP_PORT || '8883'), 10);
+const WS_PORT = parseInt(getArg('--ws-port', process.env.MQTT_WS_PORT || process.env.VITE_MQTT_WS_PORT || '8084'), 10);
+const USERNAME = getArg('--username', process.env.MQTT_USERNAME || '');
+const PASSWORD = getArg('--password', process.env.MQTT_PASSWORD || '');
+
+if (args.includes('--username') || args.includes('--password')) {
+  console.warn('SECURITY WARNING: Passing credentials via command-line flags (--username, --password)');
+  console.warn('can expose sensitive values in system process listings and shell history.');
+  console.warn('Consider setting MQTT_USERNAME and MQTT_PASSWORD environment variables instead.\n');
+}
+
+if (!USERNAME || !PASSWORD) {
+  console.error('Error: MQTT credentials are required.');
+  console.error('Provide credentials via environment variables (MQTT_USERNAME, MQTT_PASSWORD) or flags (--username, --password).');
+  process.exit(1);
+}
 
 console.log('='.repeat(70));
 console.log('  AGRAPATHA - EMQX CLUSTER DIAGNOSTIC SUITE');
@@ -32,7 +44,7 @@ console.log('='.repeat(70));
 console.log(`Broker Host : ${HOST}`);
 console.log(`Port 8883   : MQTT over TLS/SSL (ESP32 / Microcontrollers / Backend)`);
 console.log(`Port 8084   : WebSocket over TLS/SSL (React Browser Dashboard)`);
-console.log(`Credentials : ${USERNAME ? `User '${USERNAME}' provided` : 'None provided (Testing anonymous / auth prompt)'}`);
+console.log(`Credentials : Configured (masked)`);
 console.log('='.repeat(70));
 
 async function testTlsPort() {
@@ -213,7 +225,7 @@ async function testMqttConnect() {
             console.log('  ! [KODE 4] Bad Username or Password');
             console.log('    -> EMQX Cloud mengharuskan otentikasi Username/Password.');
             console.log('    -> Konfigurasikan Akun di EMQX Console: Authentication -> Password-Based.');
-            console.log('    -> Kemudian masukkan ke .env (VITE_MQTT_USERNAME & VITE_MQTT_PASSWORD).');
+            console.log('    -> Kemudian masukkan ke environment / .env (MQTT_USERNAME & MQTT_PASSWORD).');
             break;
           case 5:
             console.log('  ! [KODE 5] Not Authorized');

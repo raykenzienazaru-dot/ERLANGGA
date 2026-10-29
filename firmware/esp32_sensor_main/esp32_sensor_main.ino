@@ -6,8 +6,8 @@
  * SENSOR PIN MAPPING:
  * - DHT22 (Air Temp & Humidity)      : GPIO 19
  * - Capacitive Soil Moisture v1.2    : GPIO 34 (ADC1_CH6)
- * - Rain Sensor (Analog Intensity)   : GPIO 35 (ADC1_CH7)
- * - LDR Light Sensor (Sunlight/Lux)  : GPIO 36 (ADC1_CH0 - Sensor VP)
+ * - MQ-135 Gas / Air Quality         : GPIO 35 (ADC1_CH7 - Unverified Candidate, voltage divider <= 3.3V)
+ * - Flame Sensor (IR Detection)      : GPIO 36 (Sensor VP / ADC1_CH0 - Unverified Candidate)
  * - L298N Motor OUT3 (Driver IN3)    : GPIO 16
  * - L298N Motor OUT4 (Driver IN4)    : GPIO 17
  * - Limit Switch Left                : GPIO 32 (INPUT_PULLUP)
@@ -28,10 +28,36 @@
 #include <DHT.h>
 
 // ======================================================
-// 1. WI-FI NETWORK CONFIGURATION
+// 1. LOCAL CREDENTIAL INCLUSION & VALIDATION
 // ======================================================
-const char* WIFI_SSID     = ".";
-const char* WIFI_PASSWORD = "01020304";
+#if __has_include("credentials.h")
+  #include "credentials.h"
+#else
+  #error "credentials.h is missing! Copy credentials.example.h to credentials.h in firmware/esp32_sensor_main/ and configure your credentials."
+#endif
+
+#ifdef CREDENTIALS_PLACEHOLDER
+  #error "Placeholder credentials detected! Please configure credentials.h with valid credentials and remove CREDENTIALS_PLACEHOLDER."
+#endif
+
+#if !defined(SECRET_WIFI_SSID) || !defined(SECRET_WIFI_PASSWORD)
+  #error "Required Wi-Fi credentials (SECRET_WIFI_SSID, SECRET_WIFI_PASSWORD) are not defined in credentials.h!"
+#endif
+
+#if !defined(SECRET_MQTT_USERNAME) || !defined(SECRET_MQTT_PASSWORD)
+  #error "Required MQTT credentials (SECRET_MQTT_USERNAME, SECRET_MQTT_PASSWORD) are not defined in credentials.h!"
+#endif
+
+#if !defined(SECRET_MQTT_CA_CERT)
+  #error "Required MQTT Root CA certificate (SECRET_MQTT_CA_CERT) is not defined in credentials.h!"
+#endif
+
+// Map secrets to existing sketch identifiers (preserving type & semantics)
+const char* WIFI_SSID     = SECRET_WIFI_SSID;
+const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+const char* MQTT_USERNAME = SECRET_MQTT_USERNAME;
+const char* MQTT_PASSWORD = SECRET_MQTT_PASSWORD;
+const char* MQTT_CA_CERT   = SECRET_MQTT_CA_CERT;
 
 // ======================================================
 // 2. EMQX CLOUD BROKER SETTINGS (PORT 8883 TLS)
@@ -41,10 +67,6 @@ const char* MQTT_HOST     = "wfc1ec11.ala.asia-southeast1.emqxsl.com";
 // Backup / Alternative EU broker: "m2da914a.ala.eu-central-1.emqxsl.com"
 
 const uint16_t MQTT_PORT  = 8883;
-
-// EMQX Cloud Credentials
-const char* MQTT_USERNAME = "grenvis_esp32";
-const char* MQTT_PASSWORD = "grenvis123";
 
 // ======================================================
 // 3. MQTT TOPICS
@@ -60,13 +82,39 @@ const char* MQTT_TOPIC_CMD_AGRA  = "agrapatha/commands";
 // ======================================================
 // 4. HARDWARE PIN DEFINITIONS (REALTIME SENSORS & ACTUATOR)
 // ======================================================
-// 5 Main Sensors (No Dummy - 100% Real-Time Analog/Digital)
+// 4 Confirmed Real-Time Sensors: DHT22, Soil v1.2, MQ-135, Flame Sensor
 #define DHT_PIN      19 // DHT22 / DHT11 (Air Temp & RH)
 #define DHT_TYPE     DHT22
 
 #define SOIL_PIN     34 // Capacitive Soil Moisture Sensor v1.2 (ADC1_CH6)
-#define RAIN_PIN     35 // Rain Droplet Intensity Sensor FC-37 (ADC1_CH7)
-#define LDR_PIN      36 // LDR Light Sensor (Sensor VP / ADC1_CH0)
+
+// NOTE: MQ-135 and Flame Sensor pins require verification against physical rig wiring.
+// - MQ-135 AO must connect to ADC1 (GPIO 32-39) through a voltage divider (max 3.3V).
+// - Flame Sensor DO (digital) and AO (analog) are separate pins on the module and must not be assumed to share a single pin.
+#ifndef MQ135_PIN
+  #define MQ135_PIN            35 // ADC1_CH7 (Candidate pin)
+#endif
+
+#ifndef FLAME_SENSOR_USE_ANALOG
+  #define FLAME_SENSOR_USE_ANALOG 0 // 0 = Digital DO (default), 1 = Analog AO
+#endif
+
+#ifndef FLAME_DO_PIN
+  #define FLAME_DO_PIN         36 // Sensor VP / GPIO 36 (Candidate DO digital pin)
+#endif
+
+#ifndef FLAME_AO_PIN
+  #define FLAME_AO_PIN         39 // Sensor VN / ADC1_CH3 (Candidate AO analog pin)
+#endif
+
+#ifndef FLAME_PIN
+  #define FLAME_PIN            FLAME_DO_PIN
+#endif
+
+// Flame Sensor Polarity: 1 for active-LOW (typical LM393 DO: LOW when flame detected)
+#ifndef FLAME_ACTIVE_LOW
+  #define FLAME_ACTIVE_LOW 1
+#endif
 
 // L298N Dual H-Bridge Motor Driver (Menggunakan OUT3 & OUT4 -> Dikendalikan oleh IN3 & IN4)
 #define MOTOR_IN3    16 // ESP32 GPIO 16 -> L298N IN3 (Mengendalikan OUT3)
@@ -134,13 +182,8 @@ typedef struct __attribute__((packed)) {
 #define SOIL_DRY  3100
 #define SOIL_WET  1350
 
-// Rain Sensor (FC-37 / YL-83)
-#define RAIN_DRY  3800
-#define RAIN_WET  1200
-
-// LDR Light Sensor
-#define LDR_DARK   3900
-#define LDR_BRIGHT 400
+// MQ-135 Gas / Air Quality Sensor
+// Note: Publishes raw ADC (0-4095). Truthful telemetry: uncalibrated raw values are NOT labeled as ppm.
 
 // Live Sensor Variables
 float currentTemperature = 26.5;
@@ -149,12 +192,10 @@ float currentHumidity    = 65.0;
 int soilRaw              = 0;
 float soilMoisture       = 0.0;
 
-int rainRaw              = 0;
-float rainMmPerHour      = 0.0;
-String rainStatus        = "KERING";
-
-int ldrRaw               = 0;
-float lightLux           = 0.0;
+// Confirmed Sensors: MQ-135 and Flame Sensor
+int mq135Raw             = 0;
+int flameRaw             = 0;
+int flameDetected        = 0; // 0 = Clear/Aman, 1 = Api/Flame detected
 
 // Motor State
 enum MotorState {
@@ -178,16 +219,61 @@ float visionRust               = 0.0;
 volatile bool newVisionReady   = false;
 volatile bool newImageReady    = false;
 
-// Image Assembly Buffer
+// Image Assembly Buffer & Reassembly Tracking
 #define MAX_IMAGE_SIZE 60000
-uint8_t* imageBuffer           = nullptr;
-uint32_t currentImageSize      = 0;
-uint32_t imageScanNumber       = 0;
-uint16_t expectedChunks        = 0;
-uint16_t receivedChunks        = 0;
-bool receivingImage            = false;
-bool imageReady                = false;
-uint32_t lastPublishedImageScan = 0;
+#define MAX_IMAGE_CHUNKS ((MAX_IMAGE_SIZE + IMAGE_CHUNK_SIZE - 1) / IMAGE_CHUNK_SIZE) // 300 chunks max
+#define CHUNK_BITMASK_BYTES ((MAX_IMAGE_CHUNKS + 7) / 8)                              // 38 bytes
+
+uint8_t* imageBuffer                    = nullptr;
+uint32_t currentImageSize               = 0;
+uint32_t imageScanNumber                = 0;
+uint16_t expectedChunks                 = 0;
+uint16_t receivedChunks                 = 0;
+volatile bool receivingImage            = false;
+volatile bool imageReady                = false;
+uint32_t lastPublishedImageScan         = 0;
+
+static portMUX_TYPE imageMux                      = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t chunkBitmask[CHUNK_BITMASK_BYTES];
+static volatile unsigned long lastChunkReceivedAt = 0;
+const unsigned long IMAGE_TIMEOUT_MS              = 2500;
+
+static inline bool isChunkReceived(uint16_t idx) {
+  if (idx >= MAX_IMAGE_CHUNKS) return false;
+  return (chunkBitmask[idx / 8] & (1 << (idx % 8))) != 0;
+}
+
+static inline void markChunkReceived(uint16_t idx) {
+  if (idx < MAX_IMAGE_CHUNKS) {
+    chunkBitmask[idx / 8] |= (1 << (idx % 8));
+  }
+}
+
+static inline void resetChunkTracking() {
+  memset(chunkBitmask, 0, sizeof(chunkBitmask));
+  receivedChunks = 0;
+}
+
+void freeImageBuffer() {
+  uint8_t* bufToFree = nullptr;
+
+  portENTER_CRITICAL(&imageMux);
+  if (imageBuffer != nullptr) {
+    bufToFree   = imageBuffer;
+    imageBuffer = nullptr;
+  }
+  currentImageSize = 0;
+  expectedChunks   = 0;
+  receivingImage   = false;
+  imageReady       = false;
+  newImageReady    = false;
+  resetChunkTracking();
+  portEXIT_CRITICAL(&imageMux);
+
+  if (bufToFree != nullptr) {
+    free(bufToFree);
+  }
+}
 
 // Publish timer (3 seconds default for optimal DHT22 & ADC sampling)
 unsigned long lastPublish      = 0;
@@ -214,45 +300,40 @@ void readSoil() {
   soilMoisture = constrain(moisture, 0.0, 100.0);
 }
 
-// 2. Read Rain Sensor (Analog Intensity & Status Multi-Sample 16x)
-void readRain() {
+// 2. Read MQ-135 Gas Sensor (Analog Raw ADC Multi-Sample 16x)
+// Publishes truthful raw ADC without fabricated ppm values.
+void readMq135() {
   long sum = 0;
   for (int i = 0; i < 16; i++) {
-    sum += analogRead(RAIN_PIN);
+    sum += analogRead(MQ135_PIN);
     delay(2);
   }
-  rainRaw = sum / 16;
-
-  // Kalibrasi FC-37: Kering ~3600-4095, Gerimis ~2200-3600, Hujan <2200
-  if (rainRaw >= 3400) {
-    rainStatus = "KERING";
-    rainMmPerHour = 0.0;
-  } else if (rainRaw >= 2200) {
-    rainStatus = "GERIMIS";
-    // Konversi presisi ke laju presipitasi 0.1 - 4.5 mm/h
-    rainMmPerHour = (float)(3400 - rainRaw) / 1200.0 * 4.4 + 0.1;
-  } else {
-    rainStatus = "HUJAN";
-    // Konversi presisi ke laju presipitasi 4.5 - 30.0 mm/h
-    float intensity = 4.5 + (float)(2200 - max(800, rainRaw)) / 1400.0 * 25.5;
-    rainMmPerHour = constrain(intensity, 4.5, 30.0);
-  }
+  mq135Raw = sum / 16;
 }
 
-// 3. Read LDR Sensor (Sunlight Radiation & Lux Estimation 16x)
-void readLdr() {
+// 3. Read Flame Sensor
+// Handles Digital DO or Analog AO based on configured physical wiring mode
+void readFlame() {
+#if FLAME_SENSOR_USE_ANALOG
+  // Analog mode: AO is wired to FLAME_AO_PIN (Sensor VN / GPIO 39)
   long sum = 0;
   for (int i = 0; i < 16; i++) {
-    sum += analogRead(LDR_PIN);
+    sum += analogRead(FLAME_AO_PIN);
     delay(2);
   }
-  ldrRaw = sum / 16;
-
-  // Persentase terang (LDR_DARK ~3900, LDR_BRIGHT ~400)
-  float pct = (float)(LDR_DARK - ldrRaw) / (float)(LDR_DARK - LDR_BRIGHT) * 100.0;
-  pct = constrain(pct, 0.0, 100.0);
-  // Estimasi Lux radiasi kanopi (0 - 80,000 Lux)
-  lightLux = (pct / 100.0) * (pct / 100.0) * 80000.0;
+  flameRaw = sum / 16;
+  // Analog threshold: higher IR intensity pulls voltage down on LM393 AO
+  flameDetected = (flameRaw < 1500) ? 1 : 0;
+#else
+  // Digital mode (Default): DO is wired to FLAME_DO_PIN (GPIO 36)
+  int digitalVal = digitalRead(FLAME_DO_PIN);
+#if FLAME_ACTIVE_LOW
+  flameDetected = (digitalVal == LOW) ? 1 : 0;
+#else
+  flameDetected = (digitalVal == HIGH) ? 1 : 0;
+#endif
+  flameRaw = -1; // Unconnected / Not sampled in DO mode
+#endif
 }
 
 // 4. Read DHT22 (Air Temperature & Relative Humidity)
@@ -459,15 +540,16 @@ void publishMQTT() {
   payload += "\"soilMoisture\":" + String(soilMoisture, 2) + ",";
   payload += "\"soil_moisture\":" + String(soilMoisture, 2) + ",";
 
-  // Sensor Hujan
-  payload += "\"rain_raw\":" + String(rainRaw) + ",";
-  payload += "\"rain\":" + String(rainMmPerHour, 2) + ",";
-  payload += "\"rain_status\":\"" + rainStatus + "\",";
+  // Sensor Gas MQ-135 (Truthful Telemetry: Raw ADC published without fake ppm)
+  payload += "\"mq135_raw\":" + String(mq135Raw) + ",";
+  payload += "\"mq135\":" + String(mq135Raw) + ",";
 
-  // Sensor Cahaya (LDR)
-  payload += "\"ldr_raw\":" + String(ldrRaw) + ",";
-  payload += "\"lightLux\":" + String(lightLux, 1) + ",";
-  payload += "\"light_lux\":" + String(lightLux, 1) + ",";
+  // Sensor Api (Flame Sensor: Digital DO detection & optional AO raw ADC)
+  payload += "\"flame_detected\":" + String(flameDetected) + ",";
+  payload += "\"flame\":" + String(flameDetected) + ",";
+  if (flameRaw >= 0) {
+    payload += "\"flame_raw\":" + String(flameRaw) + ",";
+  }
 
   // Diagnostik Node & Rel
   payload += "\"nodeId\":\"ESP32-MAIN-" + WiFi.macAddress() + "\",";
@@ -502,24 +584,56 @@ void publishMQTT() {
   mqttClient.publish(MQTT_TOPIC_AGRAPATHA, payload.c_str());
 
   Serial.println("\n[MQTT] Telemetri Dipublikasikan ke EMQX:");
-  Serial.printf("  Suhu: %.2f C | RH: %.2f %% | Tanah: %.1f %% | Hujan: %s (%.1f mm/h) | Cahaya: %.0f Lux\n",
-                currentTemperature, currentHumidity, soilMoisture, rainStatus.c_str(), rainMmPerHour, lightLux);
+  Serial.printf("  Suhu: %.2f C | RH: %.2f %% | Tanah: %.1f %% | MQ-135 Raw: %d | Flame: %s\n",
+                currentTemperature, currentHumidity, soilMoisture, mq135Raw, flameDetected ? "API!" : "Aman");
 }
 
 void publishImageMQTT() {
-  if (!mqttClient.connected() || !imageReady || imageBuffer == nullptr ||
-      currentImageSize == 0 || imageScanNumber == lastPublishedImageScan) return;
+  uint8_t* pubBuf  = nullptr;
+  uint32_t pubSize = 0;
+  uint32_t pubScan = 0;
 
-  const bool started = mqttClient.beginPublish(MQTT_TOPIC_IMAGE, currentImageSize, false);
-  const size_t written = started ? mqttClient.write(imageBuffer, currentImageSize) : 0;
-  const bool ended = started && mqttClient.endPublish();
-
-  if (ended && written == currentImageSize) {
-    lastPublishedImageScan = imageScanNumber;
-    Serial.printf("[MQTT] Raw JPEG Berhasil Dipublikasikan: %lu byte\n", (unsigned long)currentImageSize);
-  } else {
-    Serial.println("[MQTT] Gagal mempublikasikan JPEG.");
+  portENTER_CRITICAL(&imageMux);
+  if (imageReady && imageBuffer != nullptr && currentImageSize > 0) {
+    pubBuf           = imageBuffer;
+    pubSize          = currentImageSize;
+    pubScan          = imageScanNumber;
+    imageBuffer      = nullptr; // Detached from shared state: exclusive loopTask ownership
+    currentImageSize = 0;
+    expectedChunks   = 0;
+    imageReady       = false;
+    receivingImage   = false;
+    newImageReady    = false;
+    resetChunkTracking();
   }
+  portEXIT_CRITICAL(&imageMux);
+
+  if (pubBuf == nullptr) {
+    return;
+  }
+
+  if (pubScan == lastPublishedImageScan) {
+    free(pubBuf);
+    return;
+  }
+
+  if (mqttClient.connected()) {
+    const bool started = mqttClient.beginPublish(MQTT_TOPIC_IMAGE, pubSize, false);
+    const size_t written = started ? mqttClient.write(pubBuf, pubSize) : 0;
+    const bool ended = started && mqttClient.endPublish();
+
+    if (ended && written == pubSize) {
+      lastPublishedImageScan = pubScan;
+      Serial.printf("[MQTT] Raw JPEG Berhasil Dipublikasikan: %lu byte\n", (unsigned long)pubSize);
+    } else {
+      Serial.println("[MQTT] Gagal mempublikasikan JPEG.");
+    }
+  } else {
+    Serial.println("[MQTT] MQTT tidak terhubung. Frame JPEG dibatalkan.");
+  }
+
+  // Lifecycle selesai: bebaskan buffer dalam semua jalur (berhasil maupun gagal)
+  free(pubBuf);
 }
 
 // ======================================================
@@ -561,43 +675,139 @@ void onEspNowReceive(const esp_now_recv_info_t* info, const uint8_t* incomingDat
     newVisionReady      = true;
     Serial.printf("\n[ESP-NOW] Metadata Diterima: %s (%.2f%%)\n", visionPrediction, visionConfidence);
   }
-  else if (packetType == PACKET_IMAGE_START && len == sizeof(ImageStartPacket)) {
+  else if (packetType == PACKET_IMAGE_START && len == (int)sizeof(ImageStartPacket)) {
     ImageStartPacket packet;
     memcpy(&packet, incomingData, sizeof(packet));
-    if (packet.imageSize <= MAX_IMAGE_SIZE) {
-      if (imageBuffer != nullptr) free(imageBuffer);
-      imageBuffer      = (uint8_t*)malloc(packet.imageSize);
-      currentImageSize = packet.imageSize;
-      imageScanNumber  = packet.scanNumber;
-      expectedChunks   = packet.totalChunks;
-      receivedChunks   = 0;
-      receivingImage   = true;
-      imageReady       = false;
-      Serial.printf("[ESP-NOW] Mulai Terima Foto: %u bytes (%u chunks)\n", currentImageSize, expectedChunks);
+
+    if (packet.imageSize > 0 && packet.imageSize <= MAX_IMAGE_SIZE) {
+      uint16_t calcChunks = (packet.imageSize + IMAGE_CHUNK_SIZE - 1) / IMAGE_CHUNK_SIZE;
+      if (packet.totalChunks == calcChunks && packet.totalChunks <= MAX_IMAGE_CHUNKS) {
+        // Alokasi memori DILUAR critical section (Rule 3)
+        uint8_t* newBuf = (uint8_t*)malloc(packet.imageSize);
+        uint8_t* oldBuf = nullptr;
+
+        portENTER_CRITICAL(&imageMux);
+        oldBuf = imageBuffer;
+
+        if (newBuf != nullptr) {
+          imageBuffer         = newBuf;
+          currentImageSize    = packet.imageSize;
+          imageScanNumber     = packet.scanNumber;
+          expectedChunks      = packet.totalChunks;
+          receivingImage      = true;
+          imageReady          = false;
+          newImageReady       = false;
+          resetChunkTracking();
+          lastChunkReceivedAt = millis();
+        } else {
+          imageBuffer         = nullptr;
+          currentImageSize    = 0;
+          expectedChunks      = 0;
+          receivingImage      = false;
+          imageReady          = false;
+          newImageReady       = false;
+          resetChunkTracking();
+        }
+        portEXIT_CRITICAL(&imageMux);
+
+        // Bebaskan buffer lama DILUAR critical section (Rule 3)
+        if (oldBuf != nullptr) {
+          free(oldBuf);
+        }
+
+        if (newBuf != nullptr) {
+          Serial.printf("[ESP-NOW] Mulai Terima Foto: %lu bytes (%u chunks)\n",
+                        (unsigned long)packet.imageSize, packet.totalChunks);
+        } else {
+          Serial.printf("[ESP-NOW] Gagal alokasi RAM %lu bytes untuk foto!\n",
+                        (unsigned long)packet.imageSize);
+        }
+      } else {
+        Serial.printf("[ESP-NOW] Paket START tidak valid: totalChunks (%u) != terhitung (%u)\n",
+                      packet.totalChunks, calcChunks);
+      }
+    } else {
+      Serial.printf("[ESP-NOW] Ukuran foto tidak valid: %lu bytes (max: %u)\n",
+                    (unsigned long)packet.imageSize, MAX_IMAGE_SIZE);
     }
   }
-  else if (packetType == PACKET_IMAGE_CHUNK && receivingImage && imageBuffer != nullptr) {
+  else if (packetType == PACKET_IMAGE_CHUNK) {
+    if (len < 9) return;
     ImageChunkPacket packet;
-    memcpy(&packet, incomingData, len < sizeof(packet) ? len : sizeof(packet));
-    if (packet.scanNumber == imageScanNumber && packet.chunkIndex < expectedChunks) {
-      uint32_t offset = packet.chunkIndex * IMAGE_CHUNK_SIZE;
-      if (offset + packet.dataLength <= currentImageSize) {
-        memcpy(imageBuffer + offset, packet.data, packet.dataLength);
-        receivedChunks++;
+    memcpy(&packet, incomingData, len < (int)sizeof(packet) ? len : sizeof(packet));
+
+    portENTER_CRITICAL(&imageMux);
+    if (receivingImage && imageBuffer != nullptr &&
+        packet.scanNumber == imageScanNumber && packet.chunkIndex < expectedChunks) {
+      uint16_t expectedLen = (packet.chunkIndex < expectedChunks - 1)
+                                 ? IMAGE_CHUNK_SIZE
+                                 : (uint16_t)(currentImageSize - ((uint32_t)packet.chunkIndex * IMAGE_CHUNK_SIZE));
+
+      uint32_t offset = (uint32_t)packet.chunkIndex * IMAGE_CHUNK_SIZE;
+
+      if (packet.dataLength == expectedLen &&
+          (int)(9 + packet.dataLength) <= len &&
+          (offset + packet.dataLength) <= currentImageSize) {
+        if (!isChunkReceived(packet.chunkIndex)) {
+          memcpy(imageBuffer + offset, packet.data, packet.dataLength);
+          markChunkReceived(packet.chunkIndex);
+          receivedChunks++;
+          lastChunkReceivedAt = millis();
+        }
       }
     }
+    portEXIT_CRITICAL(&imageMux);
   }
-  else if (packetType == PACKET_IMAGE_END && receivingImage) {
-    receivingImage = false;
-    if (receivedChunks == expectedChunks && currentImageSize > 4) {
-      // Validate JPEG header (0xFFD8) & footer (0xFFD9)
-      bool validJpeg = (imageBuffer[0] == 0xFF && imageBuffer[1] == 0xD8) &&
-                        (imageBuffer[currentImageSize - 2] == 0xFF && imageBuffer[currentImageSize - 1] == 0xD9);
-      if (validJpeg) {
-        imageReady    = true;
-        newImageReady = true;
-        Serial.printf("[ESP-NOW] Foto JPEG Lengkap & Terverifikasi (%u bytes)!\n", currentImageSize);
+  else if (packetType == PACKET_IMAGE_END) {
+    if (len < (int)sizeof(ImageEndPacket)) return;
+    ImageEndPacket packet;
+    memcpy(&packet, incomingData, sizeof(packet));
+
+    uint8_t* badBuf = nullptr;
+    bool frameVerified = false;
+    uint32_t verifiedSize = 0;
+
+    portENTER_CRITICAL(&imageMux);
+    if (receivingImage && packet.scanNumber == imageScanNumber && packet.totalChunks == expectedChunks) {
+      if (receivedChunks == expectedChunks && currentImageSize >= 4 && imageBuffer != nullptr) {
+        // Validate JPEG header (0xFFD8) & footer (0xFFD9)
+        bool validJpeg = (imageBuffer[0] == 0xFF && imageBuffer[1] == 0xD8) &&
+                         (imageBuffer[currentImageSize - 2] == 0xFF && imageBuffer[currentImageSize - 1] == 0xD9);
+        if (validJpeg) {
+          receivingImage = false;
+          imageReady     = true;
+          newImageReady  = true;
+          frameVerified  = true;
+          verifiedSize   = currentImageSize;
+        } else {
+          badBuf           = imageBuffer;
+          imageBuffer      = nullptr;
+          currentImageSize = 0;
+          expectedChunks   = 0;
+          receivingImage   = false;
+          imageReady       = false;
+          newImageReady    = false;
+          resetChunkTracking();
+        }
+      } else {
+        badBuf           = imageBuffer;
+        imageBuffer      = nullptr;
+        currentImageSize = 0;
+        expectedChunks   = 0;
+        receivingImage   = false;
+        imageReady       = false;
+        newImageReady    = false;
+        resetChunkTracking();
       }
+    }
+    portEXIT_CRITICAL(&imageMux);
+
+    if (badBuf != nullptr) {
+      free(badBuf);
+      Serial.println("[ESP-NOW] Frame tidak lengkap atau bukan JPEG valid. Buffer dibebaskan.");
+    } else if (frameVerified) {
+      Serial.printf("[ESP-NOW] Foto JPEG Lengkap & Terverifikasi (%lu bytes)!\n",
+                    (unsigned long)verifiedSize);
     }
   }
 }
@@ -632,8 +842,12 @@ void setup() {
   // Inisialisasi Sensor Pin
   dht.begin();
   pinMode(SOIL_PIN, INPUT);
-  pinMode(RAIN_PIN, INPUT);
-  pinMode(LDR_PIN, INPUT);
+  pinMode(MQ135_PIN, INPUT);
+#if FLAME_SENSOR_USE_ANALOG
+  pinMode(FLAME_AO_PIN, INPUT);
+#else
+  pinMode(FLAME_DO_PIN, INPUT);
+#endif
   analogReadResolution(12);
 
   // Inisialisasi Motor L298N (OUT3 & OUT4)
@@ -661,8 +875,8 @@ void setup() {
     Serial.println("[ESP-NOW] Inisialisasi Berhasil & Siap Komunikasi.");
   }
 
-  // Setup MQTT over TLS (Port 8883)
-  secureClient.setInsecure(); // Menggunakan enkripsi TLS dengan sertifikat server
+  // Setup MQTT over TLS (Port 8883) with Root CA Certificate Verification
+  secureClient.setCACert(MQTT_CA_CERT);
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
   mqttClient.setBufferSize(1536);
   mqttClient.setCallback(onMqttMessage);
@@ -684,6 +898,26 @@ void loop() {
   if (!mqttClient.connected()) connectMQTT();
   mqttClient.loop();
 
+  // Inactivity timeout watchdog: batalkan frame yang tertinggal setelah 2500 ms tanpa progres
+  uint8_t* timeoutBuf = nullptr;
+  portENTER_CRITICAL(&imageMux);
+  if (receivingImage && (millis() - lastChunkReceivedAt >= IMAGE_TIMEOUT_MS)) {
+    timeoutBuf       = imageBuffer;
+    imageBuffer      = nullptr;
+    currentImageSize = 0;
+    expectedChunks   = 0;
+    receivingImage   = false;
+    imageReady       = false;
+    newImageReady    = false;
+    resetChunkTracking();
+  }
+  portEXIT_CRITICAL(&imageMux);
+
+  if (timeoutBuf != nullptr) {
+    free(timeoutBuf);
+    Serial.println("[ESP-NOW] Timeout reassembly (2500 ms tanpa progres): frame dibatalkan & buffer dibebaskan.");
+  }
+
   // Kirim data sesegera mungkin saat vision / image baru selesai dirangkai
   if (newVisionReady) {
     newVisionReady = false;
@@ -699,8 +933,8 @@ void loop() {
     lastPublish = millis();
     readDht();
     readSoil();
-    readRain();
-    readLdr();
+    readMq135();
+    readFlame();
     publishMQTT();
   }
 }

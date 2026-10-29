@@ -1,0 +1,13 @@
+# Dependency directories
+node_modules/
+
+# Build artifacts
+dist/
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example

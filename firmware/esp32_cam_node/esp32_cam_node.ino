@@ -24,10 +24,30 @@
 #include <esp_wifi.h>
 
 // ======================================================
-// 1. WI-FI & RAILWAY CLOUD AI BACKEND CONFIGURATION
+// 1. LOCAL CREDENTIAL INCLUSION & VALIDATION
 // ======================================================
-const char *WIFI_SSID = ".";
-const char *WIFI_PASSWORD = "01020304";
+#if __has_include("credentials.h")
+  #include "credentials.h"
+#else
+  #error "credentials.h is missing! Copy credentials.example.h to credentials.h in firmware/esp32_cam_node/ and configure your credentials."
+#endif
+
+#ifdef CREDENTIALS_PLACEHOLDER
+  #error "Placeholder credentials detected! Please configure credentials.h with valid credentials and remove CREDENTIALS_PLACEHOLDER."
+#endif
+
+#if !defined(SECRET_WIFI_SSID) || !defined(SECRET_WIFI_PASSWORD)
+  #error "Required Wi-Fi credentials (SECRET_WIFI_SSID, SECRET_WIFI_PASSWORD) are not defined in credentials.h!"
+#endif
+
+#if !defined(SECRET_AI_CA_CERT)
+  #error "Required AI Endpoint Root CA certificate (SECRET_AI_CA_CERT) is not defined in credentials.h!"
+#endif
+
+// Map secrets to existing sketch identifiers (preserving type & semantics)
+const char *WIFI_SSID     = SECRET_WIFI_SSID;
+const char *WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+const char *AI_CA_CERT    = SECRET_AI_CA_CERT;
 
 // Primary Railway Backend for AGRAPATHA (Wildfire MobileNetV2 Inference)
 const char *AI_HOST = "tes-tflite-production.up.railway.app";
@@ -317,7 +337,7 @@ bool queryCloudAiVision(const uint8_t *jpegBuf, size_t jpegLen,
   Serial.printf("[AI-CLOUD] URL: https://%s%s\n", targetHost, targetPath);
 
   WiFiClientSecure client;
-  client.setInsecure(); // Bypass CA verification untuk endpoint Railway HTTPS
+  client.setCACert(AI_CA_CERT);
   client.setTimeout(12000);
 
   if (!client.connect(targetHost, 443)) {

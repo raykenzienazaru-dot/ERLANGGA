@@ -1,7 +1,11 @@
 import { createServer, type Server } from 'node:http';
+import { loadAccountStore, type OperatorAccount } from './auth/accountStore.ts';
 import { BoundedCache } from './cache.ts';
 import { RequestCoalescer } from './coalescer.ts';
 import { loadConfig } from './config.ts';
+import { ImageStore } from './iot/imageStore.ts';
+import { MqttGatewayAdapter } from './iot/mqttAdapter.ts';
+import { TelemetryHub } from './iot/telemetryHub.ts';
 import { BoundedRateLimiter } from './rateLimiter.ts';
 import { handleRequest } from './router.ts';
 import type { GatewayConfig, ServerDependencies, UpstreamPayload } from './types.ts';
@@ -13,11 +17,16 @@ export interface GatewayInstance {
   nowcastCache: BoundedCache<UpstreamPayload>;
   coalescer: RequestCoalescer<UpstreamPayload>;
   rateLimiter: BoundedRateLimiter;
+  loginRateLimiter: BoundedRateLimiter;
+  telemetryHub: TelemetryHub;
+  imageStore: ImageStore;
+  accountStore: Map<string, OperatorAccount>;
+  mqttAdapter?: MqttGatewayAdapter;
 }
 
 /**
  * Creates and configures the native Node.js HTTP Gateway Server.
- * Supports full dependency injection (clock, fetch, config) for unit and integration testing.
+ * Supports full dependency injection (clock, fetch, config, stores, mqttAdapter) for unit and integration testing.
  */
 export function createGatewayServer(dependencies: ServerDependencies = {}): GatewayInstance {
   const config = loadConfig(dependencies.config);
@@ -46,6 +55,45 @@ export function createGatewayServer(dependencies: ServerDependencies = {}): Gate
     now
   );
 
+  const loginRateLimiter = new BoundedRateLimiter(
+    config.loginRateLimitMax,
+    config.loginRateLimitWindowMs,
+    config.rateLimitMaxEntries,
+    now
+  );
+
+  const telemetryHub =
+    dependencies.telemetryHub ||
+    new TelemetryHub({
+      maxClientsPerIp: config.maxSseClientsPerIp,
+    });
+
+  const imageStore =
+    dependencies.imageStore ||
+    new ImageStore({
+      maxFrameBytes: config.maxImageBytes,
+      staleTtlMs: config.imageStaleTtlMs,
+    });
+
+  const accountStore =
+    dependencies.accountStore || loadAccountStore(config.operatorAccountsJson);
+
+  let mqttAdapter = dependencies.mqttAdapter;
+  if (!mqttAdapter && config.mqttEnabled) {
+    mqttAdapter = new MqttGatewayAdapter(telemetryHub, imageStore, {
+      brokerUrl: config.mqttBrokerUrl,
+      username: config.mqttUsername,
+      password: config.mqttPassword,
+      clientId: config.mqttClientId,
+      connectTimeoutMs: config.mqttConnectTimeoutMs,
+      reconnectPeriodMs: config.mqttReconnectPeriodMs,
+      keepaliveSec: config.mqttKeepaliveSec,
+      telemetryTopic: config.mqttTelemetryTopic,
+      imageTopic: config.mqttImageTopic,
+    });
+    mqttAdapter.start();
+  }
+
   const server = createServer(async (req, res) => {
     try {
       await handleRequest(req, res, {
@@ -54,6 +102,11 @@ export function createGatewayServer(dependencies: ServerDependencies = {}): Gate
         nowcastCache,
         coalescer,
         rateLimiter,
+        loginRateLimiter,
+        telemetryHub,
+        imageStore,
+        accountStore,
+        mqttAdapter,
         startTime,
         now,
         fetchFn,
@@ -67,6 +120,13 @@ export function createGatewayServer(dependencies: ServerDependencies = {}): Gate
     }
   });
 
+  server.on('close', async () => {
+    telemetryHub.destroy();
+    if (mqttAdapter) {
+      await mqttAdapter.destroy();
+    }
+  });
+
   return {
     server,
     config,
@@ -74,5 +134,10 @@ export function createGatewayServer(dependencies: ServerDependencies = {}): Gate
     nowcastCache,
     coalescer,
     rateLimiter,
+    loginRateLimiter,
+    telemetryHub,
+    imageStore,
+    accountStore,
+    mqttAdapter,
   };
 }

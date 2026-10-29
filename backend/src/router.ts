@@ -1,7 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { authenticateOperator, type OperatorAccount } from './auth/accountStore.ts';
+import { signOperatorToken, verifyOperatorToken } from './auth/tokens.ts';
 import type { BoundedCache } from './cache.ts';
 import type { RequestCoalescer } from './coalescer.ts';
 import { handleCors } from './cors.ts';
+import { evaluateActuatorCommand } from './iot/actuatorGate.ts';
+import type { ImageStore } from './iot/imageStore.ts';
+import type { MqttGatewayAdapter } from './iot/mqttAdapter.ts';
+import type { TelemetryHub } from './iot/telemetryHub.ts';
 import type { BoundedRateLimiter } from './rateLimiter.ts';
 import { getClientIp } from './rateLimiter.ts';
 import type { ClockFunction, FetchFunction, GatewayConfig, UpstreamPayload } from './types.ts';
@@ -22,6 +28,11 @@ interface RouterContext {
   nowcastCache: BoundedCache<UpstreamPayload>;
   coalescer: RequestCoalescer<UpstreamPayload>;
   rateLimiter: BoundedRateLimiter;
+  loginRateLimiter: BoundedRateLimiter;
+  telemetryHub: TelemetryHub;
+  imageStore: ImageStore;
+  accountStore: Map<string, OperatorAccount>;
+  mqttAdapter?: MqttGatewayAdapter;
   startTime: number;
   now: ClockFunction;
   fetchFn: FetchFunction;
@@ -52,12 +63,61 @@ function sendError(
   sendJson(res, statusCode, { error: message, code }, extraHeaders);
 }
 
+async function readJsonBody<T = unknown>(req: IncomingMessage, maxBytes = 4096): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let receivedBytes = 0;
+    const chunks: Buffer[] = [];
+
+    req.on('data', (chunk: Buffer) => {
+      receivedBytes += chunk.length;
+      if (receivedBytes > maxBytes) {
+        req.destroy();
+        reject(new Error('PAYLOAD_TOO_LARGE'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      if (chunks.length === 0) {
+        reject(new Error('EMPTY_BODY'));
+        return;
+      }
+      try {
+        const str = Buffer.concat(chunks).toString('utf-8');
+        const parsed = JSON.parse(str);
+        resolve(parsed as T);
+      } catch {
+        reject(new Error('INVALID_JSON'));
+      }
+    });
+
+    req.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
 export async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   ctx: RouterContext
 ): Promise<void> {
-  const { config, forecastCache, nowcastCache, coalescer, rateLimiter, startTime, now, fetchFn } = ctx;
+  const {
+    config,
+    forecastCache,
+    nowcastCache,
+    coalescer,
+    rateLimiter,
+    loginRateLimiter,
+    telemetryHub,
+    imageStore,
+    accountStore,
+    mqttAdapter,
+    startTime,
+    now,
+    fetchFn,
+  } = ctx;
 
   // 1. Strict CORS evaluation
   const shouldContinue = handleCors(req, res, config.allowedOrigins);
@@ -78,20 +138,193 @@ export async function handleRequest(
   const pathname = parsedUrl.pathname;
 
   // 2. Route matching & Method validation
+
+  // Route: /health
   if (pathname === '/health') {
     if (req.method !== 'GET') {
       sendError(res, 405, 'Method Not Allowed', 'METHOD_NOT_ALLOWED', { Allow: 'GET, OPTIONS' });
       return;
     }
     const uptimeSeconds = Math.max(0, Math.floor((now() - startTime) / 1000));
-    sendJson(res, 200, {
-      status: 'ok',
-      service: 'agrapatha-bmkg-gateway',
-      uptimeSeconds,
-    }, { 'Cache-Control': 'no-cache, no-store' });
+    const mqttConnected = mqttAdapter ? mqttAdapter.isConnected() : false;
+    sendJson(
+      res,
+      200,
+      {
+        status: 'ok',
+        service: 'agrapatha-bmkg-gateway',
+        uptimeSeconds,
+        mqttConnected,
+        actuatorsEnabled: config.enableActuators,
+      },
+      { 'Cache-Control': 'no-cache, no-store' }
+    );
     return;
   }
 
+  // Route: /api/telemetry/stream (Public SSE stream)
+  if (pathname === '/api/telemetry/stream') {
+    if (req.method !== 'GET') {
+      sendError(res, 405, 'Method Not Allowed', 'METHOD_NOT_ALLOWED', { Allow: 'GET, OPTIONS' });
+      return;
+    }
+    const clientIp = getClientIp(req.headers, req.socket.remoteAddress, config.trustProxy);
+    const unsubscribe = telemetryHub.subscribe(res, clientIp, now());
+    if (!unsubscribe) {
+      sendError(res, 429, 'Too many SSE connections for this IP address', 'TOO_MANY_CONNECTIONS');
+      return;
+    }
+    return;
+  }
+
+  // Route: /api/vision/latest-frame.jpg (Latest camera frame cache)
+  if (pathname === '/api/vision/latest-frame.jpg') {
+    if (req.method !== 'GET') {
+      sendError(res, 405, 'Method Not Allowed', 'METHOD_NOT_ALLOWED', { Allow: 'GET, OPTIONS' });
+      return;
+    }
+    const frameInfo = imageStore.getFrame(now());
+    if (!frameInfo) {
+      res.writeHead(204, {
+        'Cache-Control': 'no-cache, no-store',
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': String(frameInfo.frame.byteLength),
+      'Cache-Control': 'public, max-age=1, stale-while-revalidate=2',
+      'X-Frame-Timestamp': String(frameInfo.frame.receivedAt),
+      'X-Frame-Age-Seconds': String(frameInfo.ageSeconds),
+      'X-Frame-Stale': frameInfo.isStale ? '1' : '0',
+    });
+    res.end(frameInfo.frame.data);
+    return;
+  }
+
+  // Route: /api/auth/login (Operator Login)
+  if (pathname === '/api/auth/login') {
+    if (req.method !== 'POST') {
+      sendError(res, 405, 'Method Not Allowed', 'METHOD_NOT_ALLOWED', { Allow: 'POST, OPTIONS' });
+      return;
+    }
+
+    const clientIp = getClientIp(req.headers, req.socket.remoteAddress, config.trustProxy);
+    if (loginRateLimiter.isRateLimited(clientIp)) {
+      sendError(res, 429, 'Too many login attempts. Please slow down.', 'RATE_LIMITED', {
+        'Retry-After': '60',
+      });
+      return;
+    }
+
+    let body: any;
+    try {
+      body = await readJsonBody(req, 4096);
+    } catch (err: any) {
+      if (err.message === 'PAYLOAD_TOO_LARGE') {
+        sendError(res, 413, 'Login payload too large', 'PAYLOAD_TOO_LARGE');
+        return;
+      }
+      sendError(res, 400, 'Invalid JSON body', 'INVALID_JSON');
+      return;
+    }
+
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      typeof body.username !== 'string' ||
+      typeof body.password !== 'string' ||
+      body.username.trim() === '' ||
+      body.password === ''
+    ) {
+      sendError(res, 400, 'Username and password are required', 'INVALID_CREDENTIALS_FORMAT');
+      return;
+    }
+
+    const account = authenticateOperator(accountStore, body.username, body.password);
+    if (!account) {
+      sendError(res, 401, 'Invalid username or password', 'INVALID_CREDENTIALS');
+      return;
+    }
+
+    const nowSec = Math.floor(now() / 1000);
+    const token = signOperatorToken(account, config.gatewayTokenSecret, config.tokenExpirySec, nowSec);
+
+    sendJson(
+      res,
+      200,
+      {
+        token,
+        expiresIn: config.tokenExpirySec,
+        operator: {
+          id: account.id,
+          username: account.username,
+          displayName: account.displayName,
+          role: account.role,
+        },
+      },
+      { 'Cache-Control': 'no-store' }
+    );
+    return;
+  }
+
+  // Route: /api/commands/actuator (Operator Actuator Command — Fail-Closed Gate)
+  if (pathname === '/api/commands/actuator') {
+    if (req.method !== 'POST') {
+      sendError(res, 405, 'Method Not Allowed', 'METHOD_NOT_ALLOWED', { Allow: 'POST, OPTIONS' });
+      return;
+    }
+
+    // 1. Authenticate operator token independently of actuator safety lockout
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      sendError(res, 401, 'Missing or invalid Authorization header', 'UNAUTHORIZED');
+      return;
+    }
+
+    const token = authHeader.slice(7).trim();
+    const nowSec = Math.floor(now() / 1000);
+    const operatorPayload = verifyOperatorToken(token, config.gatewayTokenSecret, accountStore, nowSec);
+    if (!operatorPayload) {
+      sendError(res, 401, 'Invalid, expired, or revoked operator token', 'UNAUTHORIZED');
+      return;
+    }
+
+    // 2. Parse request body
+    let body: any;
+    try {
+      body = await readJsonBody(req, 4096);
+    } catch (err: any) {
+      if (err.message === 'PAYLOAD_TOO_LARGE') {
+        sendError(res, 413, 'Payload too large', 'PAYLOAD_TOO_LARGE');
+        return;
+      }
+      sendError(res, 400, 'Invalid JSON body', 'INVALID_JSON');
+      return;
+    }
+
+    // 3. Evaluate safety gate
+    const gateResult = evaluateActuatorCommand(operatorPayload, body, config.enableActuators);
+    if (!gateResult.allowed) {
+      sendError(
+        res,
+        gateResult.statusCode,
+        gateResult.error || 'Command rejected',
+        gateResult.code || 'COMMAND_REJECTED'
+      );
+      return;
+    }
+
+    // Actuation not reached in Gate A (enableActuators is false)
+    sendJson(res, 200, {
+      status: 'executed',
+      command: gateResult.commandChar,
+    });
+    return;
+  }
+
+  // BMKG Routes
   const isForecastRoute = pathname === '/api/bmkg/forecast';
   const isNowcastRoute = pathname === '/api/bmkg/nowcast/id';
 
@@ -105,7 +338,7 @@ export async function handleRequest(
     return;
   }
 
-  // 3. Rate Limiting Check
+  // 3. Rate Limiting Check for Upstream Calls
   const clientIp = getClientIp(req.headers, req.socket.remoteAddress, config.trustProxy);
   if (rateLimiter.isRateLimited(clientIp)) {
     sendError(res, 429, 'Too many requests. Please slow down.', 'RATE_LIMITED', {

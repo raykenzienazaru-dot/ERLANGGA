@@ -1,4 +1,4 @@
-import { scoreModelHazard } from './modelHazardRaw';
+import { scoreModelHazard } from './modelHazardRaw.ts';
 
 // ============================================================================
 // 1. MODEL 1: model_hazard.h (100-Tree Random Forest Classifier via m2cgen)
@@ -21,6 +21,16 @@ export interface HazardInferenceResult {
     isi: number;
   };
   kaggleBinaryPrediction: 'On Fire' | 'safe';
+}
+
+export type ModelHazardResult = HazardInferenceResult;
+
+export interface FloraSensorModelResult {
+  sensorRisk: 'High' | 'Low' | 'Moderate';
+  sensorConfidence: number;
+  highProbability: number;
+  lowProbability: number;
+  moderateProbability: number;
 }
 
 /**
@@ -109,23 +119,36 @@ export function computeFwiComponents(params: {
  * Signature in C: `void score(double * input, double * output)`
  * Feature order: `[temp, RH, wind, rain, FFMC, DMC]`
  */
-export function evaluateModelHazard(params: {
-  temp: number;
-  rh: number;
-  wind: number;
-  rain: number;
-  ffmc: number;
-  dmc: number;
-  dc?: number;
-  isi?: number;
-}): HazardInferenceResult {
+export function evaluateModelHazard(params?: {
+  temp?: number | null;
+  rh?: number | null;
+  wind?: number | null;
+  rain?: number | null;
+  ffmc?: number | null;
+  dmc?: number | null;
+  dc?: number | null;
+  isi?: number | null;
+}): HazardInferenceResult | null {
+  if (!params) return null;
+  const { temp, rh, wind, rain, ffmc, dmc } = params;
+  if (
+    typeof temp !== 'number' || !Number.isFinite(temp) ||
+    typeof rh !== 'number' || !Number.isFinite(rh) ||
+    typeof wind !== 'number' || !Number.isFinite(wind) ||
+    typeof rain !== 'number' || !Number.isFinite(rain) ||
+    typeof ffmc !== 'number' || !Number.isFinite(ffmc) ||
+    typeof dmc !== 'number' || !Number.isFinite(dmc)
+  ) {
+    return null;
+  }
+
   const inputVector: [number, number, number, number, number, number] = [
-    Number(params.temp),
-    Number(params.rh),
-    Number(params.wind),
-    Number(params.rain),
-    Number(params.ffmc),
-    Number(params.dmc),
+    temp,
+    rh,
+    wind,
+    rain,
+    ffmc,
+    dmc,
   ];
 
   const raw = scoreModelHazard(inputVector);
@@ -150,19 +173,19 @@ export function evaluateModelHazard(params: {
   }
 
   const fwi = computeFwiComponents({
-    temp: params.temp,
-    rh: params.rh,
-    wind: params.wind,
-    rain: params.rain,
-    ffmcOverride: params.ffmc,
-    dmcOverride: params.dmc,
-    dcOverride: params.dc,
-    isiOverride: params.isi,
+    temp,
+    rh,
+    wind,
+    rain,
+    ffmcOverride: ffmc,
+    dmcOverride: dmc,
+    dcOverride: typeof params.dc === 'number' && Number.isFinite(params.dc) ? params.dc : undefined,
+    isiOverride: typeof params.isi === 'number' && Number.isFinite(params.isi) ? params.isi : undefined,
   });
 
   // Binary classification label matching Kaggle notebook (0: 'safe', 1: 'On Fire')
   const kaggleBinaryPrediction: 'On Fire' | 'safe' =
-    riskLevel === 'HIGH' || (params.ffmc >= 89.5 && params.dmc >= 90) ? 'On Fire' : 'safe';
+    riskLevel === 'HIGH' || (ffmc >= 89.5 && dmc >= 90) ? 'On Fire' : 'safe';
 
   return {
     riskLevel,
@@ -262,7 +285,19 @@ function softmax(vec: number[]): number[] {
   return exps.map((v) => v / (sum || 1));
 }
 
-export function evaluateFloraSensorModel(tempC: number, humidityPct: number, soilMoisturePct: number) {
+export function evaluateFloraSensorModel(
+  tempC?: number | null,
+  humidityPct?: number | null,
+  soilMoisturePct?: number | null
+): FloraSensorModelResult | null {
+  if (
+    typeof tempC !== 'number' || !Number.isFinite(tempC) ||
+    typeof humidityPct !== 'number' || !Number.isFinite(humidityPct) ||
+    typeof soilMoisturePct !== 'number' || !Number.isFinite(soilMoisturePct)
+  ) {
+    return null;
+  }
+
   const { mean, std } = FLORA_SENSOR_MODEL_CONFIG.scaler;
   const { w1, b1, w2, b2, w3, b3 } = FLORA_SENSOR_MODEL_CONFIG.weights;
 
@@ -426,131 +461,3 @@ export const KAGGLE_FLORA_DATASET_STATS = {
     soil_moisture_percent: { mean: 67.15, std: 17.56, unit: '%', label: 'Soil Moisture (Capacitive)' },
   },
 };
-
-// ============================================================================
-// 4. REAL PRESET SCENARIOS FROM forestfires.csv + flora-environmental-risk-dataset
-// ============================================================================
-
-export interface ForestPresetScenario {
-  id: string;
-  name: string;
-  shortName: string;
-  subtitle: string;
-  month: string;
-  day: string;
-  coordX: number;
-  coordY: number;
-  temp: number;
-  rh: number;
-  wind: number;
-  rain: number;
-  ffmc: number;
-  dmc: number;
-  dc: number;
-  isi: number;
-  soilMoisture: number;
-  areaHa: number;
-  visionPrediction: 'Healthy Forest Canopy' | 'Smoke Plume Detected' | 'Active Surface Fire';
-  visionHealthy: number;
-  visionSmoke: number;
-  visionFire: number;
-}
-
-export const REAL_DATASET_PRESETS: ForestPresetScenario[] = [
-  {
-    id: 'low-canopy-safe',
-    name: 'Skenario 1 · Low Risk (forestfires.csv #20)',
-    shortName: 'Low Risk (Safe)',
-    subtitle: 'Kondisi kanopi lembap & FFMC rendah (63.5) — Zona hijau aman',
-    month: 'aug',
-    day: 'fri',
-    coordX: 6,
-    coordY: 5,
-    temp: 17.0,
-    rh: 72.0,
-    wind: 6.7,
-    rain: 0.0,
-    ffmc: 63.5,
-    dmc: 70.8,
-    dc: 665.3,
-    isi: 0.8,
-    soilMoisture: 74.5,
-    areaHa: 0.0,
-    visionPrediction: 'Healthy Forest Canopy',
-    visionHealthy: 95.2,
-    visionSmoke: 3.1,
-    visionFire: 1.7,
-  },
-  {
-    id: 'moderate-watch',
-    name: 'Skenario 2 · Moderate Risk (forestfires.csv #1)',
-    shortName: 'Moderate Risk',
-    subtitle: 'Transisi kelembapan serasah menengah (FFMC 86.2, DMC 26.2)',
-    month: 'mar',
-    day: 'fri',
-    coordX: 7,
-    coordY: 5,
-    temp: 8.2,
-    rh: 51.0,
-    wind: 6.7,
-    rain: 0.0,
-    ffmc: 86.2,
-    dmc: 26.2,
-    dc: 94.3,
-    isi: 5.1,
-    soilMoisture: 52.0,
-    areaHa: 0.0,
-    visionPrediction: 'Healthy Forest Canopy',
-    visionHealthy: 88.4,
-    visionSmoke: 8.9,
-    visionFire: 2.7,
-  },
-  {
-    id: 'kaggle-xnew-benchmark',
-    name: 'Skenario 3 · Kaggle Benchmark x_new (On Fire)',
-    shortName: 'Kaggle x_new',
-    subtitle: 'Vektor uji resmi notebook Kaggle: temp=21.3°C, RH=35%, FFMC=91.5, DMC=130.1',
-    month: 'sep',
-    day: 'sun',
-    coordX: 1,
-    coordY: 4,
-    temp: 21.3,
-    rh: 35.0,
-    wind: 2.2,
-    rain: 0.0,
-    ffmc: 91.5,
-    dmc: 130.1,
-    dc: 807.1,
-    isi: 7.5,
-    soilMoisture: 28.4,
-    areaHa: 12.85,
-    visionPrediction: 'Smoke Plume Detected',
-    visionHealthy: 6.4,
-    visionSmoke: 88.2,
-    visionFire: 5.4,
-  },
-  {
-    id: 'high-extreme-fire',
-    name: 'Skenario 4 · Extreme High Hazard (forestfires.csv #239)',
-    shortName: 'Extreme Fire',
-    subtitle: 'Puncak kemarau Montesinho: temp=33.3°C, RH=22%, FFMC=95.5, DMC=222.4',
-    month: 'aug',
-    day: 'sat',
-    coordX: 6,
-    coordY: 5,
-    temp: 33.3,
-    rh: 22.0,
-    wind: 4.9,
-    rain: 0.0,
-    ffmc: 95.5,
-    dmc: 222.4,
-    dc: 698.6,
-    isi: 16.8,
-    soilMoisture: 16.2,
-    areaHa: 1090.84,
-    visionPrediction: 'Active Surface Fire',
-    visionHealthy: 2.1,
-    visionSmoke: 14.5,
-    visionFire: 83.4,
-  },
-];

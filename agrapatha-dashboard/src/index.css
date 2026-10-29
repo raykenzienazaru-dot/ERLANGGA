@@ -1,17 +1,42 @@
 @import "tailwindcss";
 
 :root {
-  --flora-deep: #23312E;
-  --flora-primary-dark: #23312E;
-  --flora-primary: #4E635E;
-  --flora-secondary: #818C78;
-  --flora-accent: #A6B49E;
-  --flora-highlight: #E2E0CB;
-  --flora-canvas: #F7F8F5;
+  /* Kak Kenzie's Five-Color Palette */
+  --palette-skyline: #4D6A75;
+  --palette-deep-ocean: #4E8577;
+  --palette-greenery: #56612E;
+  --palette-cliffside: #7E694F;
+  --palette-shadows: #2C2922;
+
+  /* Semantic Color Semantics */
+  --color-safe: #56612E;          /* Greenery: Safe/healthy/nominal */
+  --color-primary: #4E8577;       /* Deep Ocean: Primary UI accent */
+  --color-secondary: #4D6A75;     /* Skyline: Secondary slate-teal */
+  --color-stone: #7E694F;         /* Cliffside: Earthy warm stone */
+  --color-dark: #2C2922;          /* Shadows: Deep warm charcoal */
+  --color-warning-mod: #D97706;   /* Amber: Moderate warning */
+  --color-danger-high: #DC2626;   /* Red: High/Critical fire danger */
+
+  /* Surface & Canvas Tokens */
+  --color-canvas: #F8FAF9;
+  --color-surface: #FFFFFF;
+  --color-surface-subtle: #F1F5F3;
+  --color-border: #DCE4E1;
+  --color-text-main: #2C2922;
+  --color-text-muted: #4D6A75;
+
+  /* Backward-compatible FLORA aliases mapped to Kak Kenzie palette */
+  --flora-deep: #2C2922;
+  --flora-primary-dark: #2C2922;
+  --flora-primary: #4E8577;
+  --flora-secondary: #4D6A75;
+  --flora-accent: #56612E;
+  --flora-highlight: #EAEFED;
+  --flora-canvas: #F8FAF9;
   --flora-surface: #FFFFFF;
-  --flora-border: #D6DCCE;
-  --flora-ink: #263A35;
-  --flora-muted: #50645F;
+  --flora-border: #DCE4E1;
+  --flora-ink: #2C2922;
+  --flora-muted: #4D6A75;
 }
 
 html {
@@ -20,8 +45,8 @@ html {
 
 body {
   margin: 0;
-  background-color: #F7F8F5;
-  color: #263A35;
+  background-color: #F8FAF9;
+  color: #2C2922;
   font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -257,4 +282,83 @@ body {
     flex-direction: column;
     justify-content: space-between;
   }
+}
+
+/* === B.4.8: KAK KENZIE FIVE-COLOR PALETTE & COHESIVE DASHBOARD CLASSES === */
+.bg-skyline { background-color: #4D6A75; }
+.text-skyline { color: #4D6A75; }
+.border-skyline { border-color: #4D6A75; }
+
+.bg-deep-ocean { background-color: #4E8577; }
+.text-deep-ocean { color: #4E8577; }
+.border-deep-ocean { border-color: #4E8577; }
+
+.bg-greenery { background-color: #56612E; }
+.text-greenery { color: #56612E; }
+.border-greenery { border-color: #56612E; }
+
+.bg-cliffside { background-color: #7E694F; }
+.text-cliffside { color: #7E694F; }
+.border-cliffside { border-color: #7E694F; }
+
+.bg-shadows { background-color: #2C2922; }
+.text-shadows { color: #2C2922; }
+.border-shadows { border-color: #2C2922; }
+
+/* Refined Light/Dark Card Styles */
+.agra-card {
+  background: #FFFFFF;
+  border: 1px solid #DCE4E1;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(44, 41, 34, 0.04);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.agra-card:hover {
+  border-color: #4E8577;
+  box-shadow: 0 4px 14px rgba(78, 133, 119, 0.08);
+}
+
+.agra-card-hero {
+  background: linear-gradient(135deg, #2C2922 0%, #20312D 55%, #4E8577 100%);
+  border: 1px solid #4D6A75;
+  border-radius: 18px;
+  color: #FFFFFF;
+  box-shadow: 0 10px 24px rgba(44, 41, 34, 0.16);
+}
+
+/* Semantic Badges */
+.agra-badge-safe {
+  background: rgba(86, 97, 46, 0.12);
+  color: #56612E;
+  border: 1px solid rgba(86, 97, 46, 0.35);
+}
+
+.agra-badge-moderate {
+  background: rgba(217, 119, 6, 0.12);
+  color: #B45309;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+}
+
+.agra-badge-high {
+  background: rgba(220, 38, 38, 0.12);
+  color: #DC2626;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+}
+
+.agra-badge-ocean {
+  background: rgba(78, 133, 119, 0.12);
+  color: #4E8577;
+  border: 1px solid rgba(78, 133, 119, 0.3);
+}
+
+.agra-badge-skyline {
+  background: rgba(77, 106, 117, 0.12);
+  color: #4D6A75;
+  border: 1px solid rgba(77, 106, 117, 0.25);
+}
+
+.agra-badge-cliffside {
+  background: rgba(126, 105, 79, 0.12);
+  color: #7E694F;
+  border: 1px solid rgba(126, 105, 79, 0.3);
 }

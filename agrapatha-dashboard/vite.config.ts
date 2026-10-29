@@ -13,15 +13,13 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api/bmkg/forecast': {
-        target: 'https://api.bmkg.go.id',
+      '/api': {
+        target: 'http://localhost:3000',
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api\/bmkg\/forecast/, '/publik/prakiraan-cuaca'),
       },
-      '/api/bmkg/nowcast': {
-        target: 'https://www.bmkg.go.id',
+      '/health': {
+        target: 'http://localhost:3000',
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api\/bmkg\/nowcast/, '/alerts/nowcast'),
       },
     },
   },

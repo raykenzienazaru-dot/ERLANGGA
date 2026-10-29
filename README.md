@@ -99,7 +99,7 @@ Proyek ini menggunakan arsitektur **Single Source of Truth (`src/config/iotConfi
 | `Broker Host` | `wfc1ec11.ala.asia-southeast1.emqxsl.com` | Host EMQX Cloud Serverless |
 | `Browser Port (WSS)` | `8084` | Port WebSocket aman untuk Web Dashboard |
 | `Hardware Port (TLS)` | `8883` | Port MQTTS TCP aman untuk ESP32 |
-| `Username / Password` | `grenvis_esp32` / `grenvis123` | Kredensial aktif EMQX Cloud |
+| `Username / Password` | `YOUR_MQTT_USERNAME` / `YOUR_MQTT_PASSWORD` | Kredensial autentikasi EMQX Cloud (dikonfigurasi via environment / sketch header) |
 | `Wildfire API URL` | `https://tes-tflite-production.up.railway.app` | Backend FastAPI MobileNetV2 |
 | `Topic Telemetry` | `agrapatha/telemetry` & `grenvis/sensor/data` | Topik stream data sensor |
 | `Topic Control` | `agrapatha/commands` & `grenvis/device/control` | Topik kendali motor rel & trigger foto |

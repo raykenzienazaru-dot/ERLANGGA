@@ -451,7 +451,7 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = React.memo(
           </div>
           <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3.5 rounded-xl shadow-2xs flex flex-col justify-between min-h-[92px]">
             <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block font-mono">
-              Soil Moisture Momentum (FLORA)
+              Soil Moisture Momentum
             </span>
             <span
               className={`text-sm font-bold font-display block mt-1.5 ${
@@ -485,14 +485,14 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = React.memo(
         <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
           <div>
             <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block font-mono">
-              Aggregation Archive · Montesinho &amp; FLORA Reference
+              Aggregation Archive · Montesinho Reference
             </span>
             <h2 className="text-base font-bold text-[#263A35] font-display mt-0.5">
               24-Hour Statistical Summary &amp; Dataset Rollup
             </h2>
           </div>
           <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-[#EFF3EF] text-[#263A35] border border-[#A6B49E] shadow-2xs">
-            {visiblePoints.length} Live Points · 517 FWI + 9,000 FLORA Rows
+            {visiblePoints.length} Data Points · 517 FWI Reference
           </span>
         </div>
 

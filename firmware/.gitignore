@@ -1,0 +1,16 @@
+# Local sketch credential headers
+credentials.h
+*credentials*.h
+!credentials.example.h
+!*credentials*.example.h
+secrets.h
+
+# Keys and certificates
+*.key
+*.pem
+
+# Arduino / PlatformIO build artifacts
+build/
+*.bin
+*.elf
+*.hex

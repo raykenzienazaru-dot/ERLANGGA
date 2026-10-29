@@ -375,7 +375,7 @@ export const FloraBmkgCard: React.FC<FloraBmkgCardProps> = ({
           <span>Badan Meteorologi, Klimatologi, dan Geofisika (BMKG) · Open Data API</span>
         </div>
         <div className="text-left sm:text-right max-w-md text-[#50645F]/80">
-          Informasi makro-regional eksternal. Beroperasi secara independen dari sensor mikroklimat lokal dan model inferensi C header Flora.
+          Informasi makro-regional eksternal. Beroperasi secara independen dari sensor mikroklimat lokal dan model inferensi C header AGRAPATHA.
         </div>
       </footer>
     </section>

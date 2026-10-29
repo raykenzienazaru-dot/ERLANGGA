@@ -6,10 +6,13 @@
   "type": "module",
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
-    "test": "node --experimental-strip-types --test tests/gateway.test.ts"
+    "test": "node --experimental-strip-types --test tests/gateway.test.ts tests/gatewayIoT.test.ts tests/mqttAdapter.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "~6.0.2"
+  },
+  "dependencies": {
+    "mqtt": "^5.16.1"
   }
 }

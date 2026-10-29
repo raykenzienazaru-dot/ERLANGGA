@@ -3,12 +3,13 @@ import {
   computeFwiComponents,
   evaluateFloraSensorModel,
   evaluateModelHazard,
-  REAL_DATASET_PRESETS,
 } from './lib/aiModels';
 import { FloraSplash } from './components/FloraSplash';
 import { FloraKaggleSection } from './components/FloraKaggleSection';
 import { FloraHistoryCanvas, type TelemetryHistoryPoint } from './components/FloraHistoryCanvas';
 import { FloraBmkgCard } from './components/FloraBmkgCard';
+import { Model1HazardView } from './components/Model1HazardView';
+import { Model2BotanicalView } from './components/Model2BotanicalView';
 import {
   Camera,
   Upload,
@@ -21,6 +22,9 @@ import {
   VideoOff,
   Sparkles,
   Info,
+  LayoutGrid,
+  Layers,
+  ChevronRight,
 } from 'lucide-react';
 import type {
   CameraStatus,
@@ -38,13 +42,19 @@ import {
 } from './lib/cameraCapture';
 import { predictWildfireImage } from './lib/wildfireService';
 import { isLeafDiseaseApiConfigured, predictLeafDiseaseImage } from './lib/leafDiseaseService';
-import { MqttTestModal } from './components/MqttTestModal';
 import {
-  subscribeLiveTelemetry,
-  publishMqttCommand,
-  type IncomingTelemetryMessage,
-  type MqttConnectionState,
-} from './lib/mqttService';
+  subscribeGatewayTelemetry,
+  fetchLatestCameraFrame,
+  checkGatewayHealth,
+  type GatewayTelemetryPayload,
+  type GatewayConnectionStatus,
+  type GatewayHealthResponse,
+} from './lib/gatewayService';
+import {
+  formatSensorValue,
+  getSensorStatusLabel,
+  getDeviceConnectivityStatus,
+} from './lib/sensorDisplay';
 
 const SECTION_IDS = [
   'overview',
@@ -64,34 +74,6 @@ interface WateringLogEvent {
   timestamp: string;
   soilBefore: number;
   note: string;
-}
-
-// Generate realistic SVG canopy/forest camera frame data URL
-function generateCanopyFrameSvg(mode: 'Healthy Forest Canopy' | 'Smoke Plume Detected' | 'Active Surface Fire'): string {
-  const isFire = mode === 'Active Surface Fire';
-  const isSmoke = mode === 'Smoke Plume Detected';
-  const skyTop = isFire ? '#3b120c' : isSmoke ? '#2b352c' : '#163012';
-  const skyBot = isFire ? '#7c2d12' : isSmoke ? '#4e5c4e' : '#2d4f1e';
-  const overlay = isFire
-    ? `<circle cx="480" cy="255" r="78" fill="#ef4444" fill-opacity="0.45"/><circle cx="480" cy="260" r="42" fill="#facc15" fill-opacity="0.75"/><rect x="380" y="160" width="200" height="175" rx="8" fill="none" stroke="#ef4444" stroke-width="3" stroke-dasharray="6,4"/>`
-    : isSmoke
-    ? `<ellipse cx="430" cy="210" rx="135" ry="65" fill="#cbd5e1" fill-opacity="0.48"/><ellipse cx="475" cy="180" rx="110" ry="50" fill="#e2e8f0" fill-opacity="0.38"/><rect x="310" y="130" width="280" height="160" rx="8" fill="none" stroke="#fb923c" stroke-width="3" stroke-dasharray="6,4"/>`
-    : `<rect x="260" y="120" width="280" height="180" rx="8" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-dasharray="6,4"/>`;
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
-    <defs>
-      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${skyTop}"/>
-        <stop offset="100%" stop-color="${skyBot}"/>
-      </linearGradient>
-    </defs>
-    <rect width="800" height="450" fill="url(#sky)"/>
-    <path d="M0 340 L140 240 L260 320 L410 210 L560 310 L690 220 L800 300 L800 450 L0 450 Z" fill="#1e2f13" opacity="0.85"/>
-    <path d="M0 375 L110 290 L230 360 L360 270 L500 355 L640 265 L800 350 L800 450 L0 450 Z" fill="#14200b"/>
-    ${overlay}
-    <text x="24" y="36" fill="#f0f4e8" font-family="monospace" font-size="13" font-weight="bold">ESP32-CAM OV2640 · MONTESINHO SECTOR (X,Y) · ${mode.toUpperCase()}</text>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
 // Leaf component for clock to isolate 1-second interval re-renders from the dashboard tree
@@ -115,31 +97,31 @@ const LiveClockBadge: React.FC = React.memo(() => {
   );
 });
 
+export type ActiveDashboardTab = 'overview' | 'model_hazard' | 'model_botanical' | 'model_vision' | 'all';
+
 export const App: React.FC = () => {
   // Boot splash state ('boot' shows the 3D Welcome screen just like flora-six-zeta.vercel.app)
   const [viewMode, setViewMode] = useState<'boot' | 'dashboard'>('boot');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string>('overview');
+  const [currentTab, setCurrentTab] = useState<ActiveDashboardTab>('overview');
 
-  // Active Kaggle preset & live sensor parameters
-  const [activePresetId, setActivePresetId] = useState<string>('kaggle-xnew-benchmark');
-  const [temp, setTemp] = useState<number>(21.3);
-  const [rh, setRh] = useState<number>(35.0);
-  const [wind, setWind] = useState<number>(2.2);
-  const [rain, setRain] = useState<number>(0.0);
-  const [ffmc, setFfmc] = useState<number>(91.5);
-  const [dmc, setDmc] = useState<number>(130.1);
-  const [dc, setDc] = useState<number>(807.1);
-  const [isi, setIsi] = useState<number>(7.5);
-  const [soilMoisture, setSoilMoisture] = useState<number>(28.4);
+  // Live telemetry parameters initialized to null (strict live-only data integrity)
+  const [temp, setTemp] = useState<number | null>(null);
+  const [rh, setRh] = useState<number | null>(null);
+  const [wind, setWind] = useState<number | null>(null);
+  const [rain, setRain] = useState<number | null>(null);
+  const [ffmc, setFfmc] = useState<number | null>(null);
+  const [dmc, setDmc] = useState<number | null>(null);
+  const [dc, setDc] = useState<number | null>(null);
+  const [isi, setIsi] = useState<number | null>(null);
+  const [soilMoisture, setSoilMoisture] = useState<number | null>(null);
 
   // Vision & Camera state
-  const [visionPrediction, setVisionPrediction] = useState<
-    'Healthy Forest Canopy' | 'Smoke Plume Detected' | 'Active Surface Fire'
-  >('Smoke Plume Detected');
-  const [visionProbs, setVisionProbs] = useState({ healthy: 6.4, smoke: 88.2, fire: 5.4 });
+  const [visionPrediction, setVisionPrediction] = useState<string>('Standby / Belum Dianalisis');
+  const [visionProbs, setVisionProbs] = useState({ healthy: 0, smoke: 0, fire: 0 });
   const [isCapturing, setIsCapturing] = useState(false);
-  const [lastCaptureTime, setLastCaptureTime] = useState<string>(() => new Date().toISOString());
+  const [lastCaptureTime, setLastCaptureTime] = useState<string | null>(null);
 
   // Phase 2B: Real Camera, Upload & Dual-Domain Inference State
   const [visionDomain, setVisionDomain] = useState<VisionDomain>('wildfire');
@@ -160,30 +142,18 @@ export const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const activeInferenceAbortRef = useRef<AbortController | null>(null);
 
-  // Memoize camera canopy SVG to avoid string building and URI encoding on each render
-  const canopyFrameSvg = useMemo(
-    () => generateCanopyFrameSvg(visionPrediction),
-    [visionPrediction]
-  );
 
   // Actuator / Rail L298N state
   const [movementStatus, setMovementStatus] = useState<
     'idle' | 'left_command_sent' | 'right_command_sent' | 'stop_command_sent' | 'capture_command_sent'
   >('idle');
   const [lastCommand, setLastCommand] = useState<string | null>('C');
-  const [railPositionMm, setRailPositionMm] = useState<number>(480);
   const [limitLeft, setLimitLeft] = useState<boolean>(false);
   const [limitRight, setLimitRight] = useState<boolean>(false);
+  const railPositionMm = limitLeft ? 0 : limitRight ? 1200 : null;
 
-  // Watering / Suppression log state
-  const [wateringEvents, setWateringEvents] = useState<WateringLogEvent[]>([
-    {
-      id: 1,
-      timestamp: new Date(Date.now() - 18 * 60000).toISOString(),
-      soilBefore: 26.5,
-      note: 'Penyiraman otomatis zona penyangga & pendinginan serasah hutan',
-    },
-  ]);
+  // Watering / Suppression log state initialized empty (live session logs only)
+  const [wateringEvents, setWateringEvents] = useState<WateringLogEvent[]>([]);
 
   // Toast state
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({
@@ -191,69 +161,275 @@ export const App: React.FC = () => {
     visible: false,
   });
 
-  // EMQX MQTT Diagnostic Modal state
-  const [mqttModalOpen, setMqttModalOpen] = useState<boolean>(false);
+  const showToast = useCallback((msg: string) => {
+    setToast({ message: msg, visible: true });
+    setTimeout(() => {
+      setToast((prev) => ({ ...prev, visible: false }));
+    }, 3200);
+  }, []);
 
-  // 100% Real-Time Live MQTT Telemetry State (5 Sensors & L298N OUT3/OUT4)
-  const [mqttState, setMqttState] = useState<MqttConnectionState>('disconnected');
-  const [isLiveMqtt, setIsLiveMqtt] = useState<boolean>(false);
+
+  // Backend Gateway SSE Telemetry State (/api/telemetry/stream)
+  const [gatewayStatus, setGatewayStatus] = useState<GatewayConnectionStatus>('connecting');
+  const [isLiveTelemetry, setIsLiveTelemetry] = useState<boolean>(false);
+  const [isTelemetryStale, setIsTelemetryStale] = useState<boolean>(false);
   const [lastLiveTelemetryTime, setLastLiveTelemetryTime] = useState<Date | null>(null);
-  const [rainStatus, setRainStatus] = useState<string>('KERING');
-  const [rainRaw, setRainRaw] = useState<number | null>(null);
+  const [gatewayHealth, setGatewayHealth] = useState<GatewayHealthResponse | null>(null);
+  const [, setGatewayUptimeSeconds] = useState<number | null>(null);
   const [soilRaw, setSoilRaw] = useState<number | null>(null);
-  const [lightLux, setLightLux] = useState<number>(36500);
-  const [ldrRaw, setLdrRaw] = useState<number | null>(null);
+  const [gasPpm, setGasPpm] = useState<number | null>(null);
+  const [mq135Raw, setMq135Raw] = useState<number | null>(null);
+  const [flameDetected, setFlameDetected] = useState<number | null>(null);
+  const [flameRaw, setFlameRaw] = useState<number | null>(null);
   const [motorDriverInfo, setMotorDriverInfo] = useState<string>('L298N OUT3 & OUT4');
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [activeNodeId] = useState<string | null>(null);
+  const [edgePrediction, setEdgePrediction] = useState<string | null>(null);
+  const [edgeConfidence, setEdgeConfidence] = useState<number | null>(null);
 
-  // Auto-connect to live EMQX WebSocket (Port 8084 WSS) for 100% real-time telemetri
+  // Gateway Camera Frame State (/api/vision/latest-frame.jpg)
+  const [gatewayFrameMeta, setGatewayFrameMeta] = useState<{
+    byteLength: number;
+    receivedAt: number | null;
+    ageSeconds: number | null;
+    isStale: boolean;
+  } | null>(null);
+  const [isFetchingGatewayFrame, setIsFetchingGatewayFrame] = useState<boolean>(false);
+  const [gatewayFrameStatus, setGatewayFrameStatus] = useState<'idle' | 'standby' | 'ready' | 'error'>('idle');
+  const isFetchingFrameRef = useRef(false);
+
+  // Stable references to decouple effect lifecycle from reactive sensor updates
+  const lastTelemetryTimestampRef = useRef<number | null>(null);
+  const sensorValuesRef = useRef<{
+    temp: number | null;
+    rh: number | null;
+    wind: number | null;
+    rain: number | null;
+    soilMoisture: number | null;
+  }>({ temp, rh, wind, rain, soilMoisture });
   useEffect(() => {
-    const unsubscribe = subscribeLiveTelemetry({
-      onTelemetry: (msg: IncomingTelemetryMessage) => {
-        setIsLiveMqtt(true);
-        setLastLiveTelemetryTime(new Date());
+    sensorValuesRef.current = { temp, rh, wind, rain, soilMoisture };
+  });
 
-        if (typeof msg.temp === 'number') setTemp(Number(msg.temp.toFixed(1)));
-        if (typeof msg.rh === 'number') setRh(Number(msg.rh.toFixed(1)));
-        if (typeof msg.soilMoisture === 'number') setSoilMoisture(Number(msg.soilMoisture.toFixed(1)));
-        if (typeof msg.soilRaw === 'number') setSoilRaw(msg.soilRaw);
-        if (typeof msg.rain === 'number') setRain(Number(msg.rain.toFixed(2)));
-        if (typeof msg.rainRaw === 'number') setRainRaw(msg.rainRaw);
-        if (typeof msg.rainStatus === 'string') setRainStatus(msg.rainStatus);
-        if (typeof msg.lightLux === 'number') setLightLux(Math.round(msg.lightLux));
-        if (typeof msg.ldrRaw === 'number') setLdrRaw(msg.ldrRaw);
-        if (typeof msg.nodeId === 'string') setActiveNodeId(msg.nodeId);
-        if (typeof msg.motorDriver === 'string') setMotorDriverInfo(msg.motorDriver);
+  // Fetch latest camera JPEG frame from backend cache (/api/vision/latest-frame.jpg)
+  const handleFetchGatewayFrame = useCallback(async (manual = false) => {
+    if (isFetchingFrameRef.current) return;
+    isFetchingFrameRef.current = true;
+    setIsFetchingGatewayFrame(true);
 
-        if (typeof msg.limitLeft === 'boolean') setLimitLeft(msg.limitLeft);
-        if (typeof msg.limitRight === 'boolean') setLimitRight(msg.limitRight);
+    try {
+      const res = await fetchLatestCameraFrame();
+      if (res.hasFrame && res.frame) {
+        const newUrl = URL.createObjectURL(res.frame.blob);
+        setGatewayFrameMeta({
+          byteLength: res.frame.byteLength,
+          receivedAt: res.frame.receivedAt,
+          ageSeconds: res.frame.ageSeconds,
+          isStale: res.frame.isStale,
+        });
+        setGatewayFrameStatus('ready');
+        setLastCaptureTime(new Date(res.frame.receivedAt || Date.now()).toISOString());
 
-        if (typeof msg.motorState === 'string') {
-          if (msg.motorState === 'LEFT') setMovementStatus('left_command_sent');
-          else if (msg.motorState === 'RIGHT') setMovementStatus('right_command_sent');
-          else if (msg.motorState === 'STOPPED') setMovementStatus('stop_command_sent');
+        // Make frame available for AI visual inference (previewUrl effect handles single-owner lifecycle)
+        setCapturedBlob(res.frame.blob);
+        setPreviewUrl(newUrl);
+        setCaptureSource('gateway');
+        setCameraStatus('captured');
+        setInferenceStatus('idle');
+        setInferenceError(null);
+
+        if (manual) {
+          showToast(`Frame gateway berhasil dimuat (${(res.frame.byteLength / 1024).toFixed(1)} KB${res.frame.isStale ? ' · STALE' : ''})`);
+        }
+      } else {
+        setGatewayFrameStatus('standby');
+        if (manual) {
+          showToast('Belum ada frame kamera di cache gateway (HTTP 204 Standby). Menunggu transmisi ESP32-CAM.');
+        }
+      }
+    } catch (err: unknown) {
+      setGatewayFrameStatus('error');
+      if (manual) {
+        const msg = err instanceof Error ? err.message : 'Gagal mengambil frame dari gateway';
+        showToast(msg);
+      }
+    } finally {
+      isFetchingFrameRef.current = false;
+      setIsFetchingGatewayFrame(false);
+    }
+  }, [showToast]);
+
+  const fetchGatewayFrameRef = useRef(handleFetchGatewayFrame);
+  useEffect(() => {
+    fetchGatewayFrameRef.current = handleFetchGatewayFrame;
+  });
+
+  // Subscribe to read-only Backend Gateway Server-Sent Events (/api/telemetry/stream)
+  // Stable lifecycle: does NOT reconnect on sensor state updates (F-01 fix)
+  useEffect(() => {
+    const unsubscribe = subscribeGatewayTelemetry({
+      onTelemetry: (payload: GatewayTelemetryPayload) => {
+        const now = Date.now();
+        lastTelemetryTimestampRef.current = now;
+        setLastLiveTelemetryTime(new Date(now));
+        setIsLiveTelemetry(true);
+        setIsTelemetryStale(payload.freshness === 'STALE');
+
+        const newTemp = typeof payload.temp === 'number' && Number.isFinite(payload.temp) ? Number(payload.temp.toFixed(1)) : null;
+        const newRh = typeof payload.rh === 'number' && Number.isFinite(payload.rh) ? Number(payload.rh.toFixed(1)) : null;
+        const newSoil = typeof payload.soilMoisture === 'number' && Number.isFinite(payload.soilMoisture) ? Number(payload.soilMoisture.toFixed(1)) : null;
+        const newRain = typeof payload.rain === 'number' && Number.isFinite(payload.rain) ? Number(payload.rain.toFixed(2)) : null;
+        const newWind = typeof payload.wind === 'number' && Number.isFinite(payload.wind) ? Number(payload.wind.toFixed(1)) : null;
+
+        if (newTemp !== null) setTemp(newTemp);
+        if (newRh !== null) setRh(newRh);
+        if (newSoil !== null) setSoilMoisture(newSoil);
+        if (typeof payload.soilRaw === 'number' && Number.isFinite(payload.soilRaw)) {
+          setSoilRaw(payload.soilRaw);
+        }
+        setRain(newRain);
+        setWind(newWind);
+        if (typeof payload.gasPpm === 'number' && Number.isFinite(payload.gasPpm)) {
+          setGasPpm(Math.round(payload.gasPpm));
+        } else {
+          setGasPpm(null);
+        }
+        if (typeof payload.mq135Raw === 'number' && Number.isFinite(payload.mq135Raw)) {
+          setMq135Raw(Math.round(payload.mq135Raw));
+        } else {
+          setMq135Raw(null);
+        }
+        if (typeof payload.flameDetected === 'number' && Number.isFinite(payload.flameDetected)) {
+          setFlameDetected(payload.flameDetected);
+        } else {
+          setFlameDetected(null);
+        }
+        if (typeof payload.flameRaw === 'number' && Number.isFinite(payload.flameRaw)) {
+          setFlameRaw(Math.round(payload.flameRaw));
+        } else {
+          setFlameRaw(null);
+        }
+        if (typeof payload.motorDriver === 'string' && payload.motorDriver.trim() !== '') {
+          setMotorDriverInfo(payload.motorDriver.trim());
+        }
+        if (typeof payload.uptimeSeconds === 'number' && Number.isFinite(payload.uptimeSeconds)) {
+          setGatewayUptimeSeconds(payload.uptimeSeconds);
         }
 
-        if (typeof msg.ffmc === 'number') setFfmc(Number(msg.ffmc.toFixed(1)));
-        if (typeof msg.dmc === 'number') setDmc(Number(msg.dmc.toFixed(1)));
-        if (typeof msg.dc === 'number') setDc(Number(msg.dc.toFixed(1)));
-        if (typeof msg.isi === 'number') setIsi(Number(msg.isi.toFixed(1)));
+        if (typeof payload.limitLeft === 'boolean') setLimitLeft(payload.limitLeft);
+        if (typeof payload.limitRight === 'boolean') setLimitRight(payload.limitRight);
 
-        if (msg.visionPrediction) {
-          if (msg.visionPrediction.toLowerCase().includes('fire')) {
-            setVisionPrediction('Active Surface Fire');
-            setVisionProbs({ healthy: 2.1, smoke: 12.4, fire: 85.5 });
-          } else if (msg.visionPrediction.toLowerCase().includes('smoke')) {
-            setVisionPrediction('Smoke Plume Detected');
-            setVisionProbs({ healthy: 5.2, smoke: 89.1, fire: 5.7 });
-          } else {
-            setVisionPrediction('Healthy Forest Canopy');
-            setVisionProbs({ healthy: 92.4, smoke: 5.1, fire: 2.5 });
+        if (typeof payload.motorState === 'string') {
+          if (payload.motorState === 'LEFT') setMovementStatus('left_command_sent');
+          else if (payload.motorState === 'RIGHT') setMovementStatus('right_command_sent');
+          else if (payload.motorState === 'STOPPED') setMovementStatus('stop_command_sent');
+        }
+
+        // Dynamically compute FWI components using latest values without stale closures or reconnecting SSE
+        const currentSensors = sensorValuesRef.current;
+        const currentTemp = newTemp !== null ? newTemp : currentSensors.temp;
+        const currentRh = newRh !== null ? newRh : currentSensors.rh;
+        const currentRain = newRain;
+        const currentSoil = newSoil !== null ? newSoil : currentSensors.soilMoisture;
+
+        if (currentTemp !== null && currentRh !== null && newWind !== null && currentRain !== null) {
+          const fwi = computeFwiComponents({
+            temp: currentTemp,
+            rh: currentRh,
+            wind: newWind,
+            rain: currentRain,
+            soilMoisture: currentSoil !== null ? currentSoil : undefined,
+          });
+          setFfmc(Number(fwi.ffmc.toFixed(1)));
+          setDmc(Number(fwi.dmc.toFixed(1)));
+          setDc(Number(fwi.dc.toFixed(1)));
+          setIsi(Number(fwi.isi.toFixed(1)));
+
+          // Record genuine incoming telemetry point to history
+          const evalRes = evaluateModelHazard({
+            temp: currentTemp,
+            rh: currentRh,
+            wind: newWind,
+            rain: currentRain,
+            ffmc: fwi.ffmc,
+            dmc: fwi.dmc,
+            dc: fwi.dc,
+            isi: fwi.isi,
+          });
+          if (evalRes && currentSoil !== null) {
+            const genuinePoint: TelemetryHistoryPoint = {
+              timestamp: new Date().toISOString(),
+              temperature: currentTemp,
+              humidity: currentRh,
+              soil_moisture: currentSoil,
+              wind: newWind,
+              rain: currentRain,
+              ffmc: Number(fwi.ffmc.toFixed(1)),
+              dmc: Number(fwi.dmc.toFixed(1)),
+              dc: Number(fwi.dc.toFixed(1)),
+              isi: Number(fwi.isi.toFixed(1)),
+              sensor_risk: evalRes.riskLevel,
+              sensor_confidence: evalRes.confidence,
+              vision_prediction: typeof payload.visionPrediction === 'string' ? payload.visionPrediction : 'No Detection',
+            };
+            setHistory((prev) => [...prev.slice(-49), genuinePoint]);
           }
+        } else {
+          setFfmc(null);
+          setDmc(null);
+          setDc(null);
+          setIsi(null);
+        }
+
+        // Record genuine edge AI predictions without overwriting cloud vision probability distributions
+        if (payload.visionPrediction) {
+          setEdgePrediction(payload.visionPrediction);
+          setEdgeConfidence(payload.visionConfidence);
+        }
+
+        // Trigger camera frame fetch when backend signals a new image frame is ready
+        if (payload.imageReady === true) {
+          fetchGatewayFrameRef.current(false);
         }
       },
       onStatusChange: (status) => {
-        setMqttState(status);
+        setGatewayStatus(status);
+        if (status === 'error' || status === 'closed') {
+          setIsLiveTelemetry(false);
+          setIsTelemetryStale(false);
+          setTemp(null);
+          setRh(null);
+          setWind(null);
+          setRain(null);
+          setFfmc(null);
+          setDmc(null);
+          setDc(null);
+          setIsi(null);
+          setSoilMoisture(null);
+          setSoilRaw(null);
+          setGasPpm(null);
+          setFlameDetected(null);
+          setEdgePrediction(null);
+          setEdgeConfidence(null);
+        }
+      },
+      onError: () => {
+        setGatewayStatus('error');
+        setIsLiveTelemetry(false);
+        setIsTelemetryStale(false);
+        setTemp(null);
+        setRh(null);
+        setWind(null);
+        setRain(null);
+        setFfmc(null);
+        setDmc(null);
+        setDc(null);
+        setIsi(null);
+        setSoilMoisture(null);
+        setSoilRaw(null);
+        setGasPpm(null);
+        setFlameDetected(null);
+        setEdgePrediction(null);
+        setEdgeConfidence(null);
       },
     });
 
@@ -262,11 +438,53 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const showToast = useCallback((msg: string) => {
-    setToast({ message: msg, visible: true });
-    setTimeout(() => {
-      setToast((prev) => ({ ...prev, visible: false }));
-    }, 3200);
+  // Periodic Telemetry Freshness Watchdog (10s threshold) (F-02 fix)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const lastTime = lastTelemetryTimestampRef.current;
+      if (!lastTime) return;
+      const age = Date.now() - lastTime;
+      if (age > 10000) {
+        setIsTelemetryStale((prev) => (prev ? prev : true));
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // Periodic Gateway Health Check (/health) (F-03 fix)
+  useEffect(() => {
+    let active = true;
+    let abortController: AbortController | null = null;
+
+    const performHealthCheck = async () => {
+      abortController?.abort();
+      abortController = new AbortController();
+
+      try {
+        const health = await checkGatewayHealth({ signal: abortController.signal });
+        if (active) {
+          setGatewayHealth(health);
+          if (typeof health.uptimeSeconds === 'number') {
+            setGatewayUptimeSeconds(health.uptimeSeconds);
+          }
+        }
+      } catch (err: unknown) {
+        if (active) {
+          if (err instanceof Error && err.name === 'AbortError') return;
+          setGatewayHealth((prev) => (prev ? { ...prev, mqttConnected: false } : null));
+        }
+      }
+    };
+
+    performHealthCheck();
+    const interval = setInterval(performHealthCheck, 15000);
+
+    return () => {
+      active = false;
+      abortController?.abort();
+      clearInterval(interval);
+    };
   }, []);
 
   // Close mobile drawer on Escape key press for keyboard accessibility (WCAG 2.1)
@@ -281,63 +499,49 @@ export const App: React.FC = () => {
   }, [mobileMenuOpen]);
 
   // Real-time C Header AI Model 1: model_hazard.h (100-Tree Random Forest)
+  // Evaluated ONLY when genuine live telemetry is actively connected, fresh, and complete
   const hazardResult = useMemo(
-    () =>
-      evaluateModelHazard({
+    () => {
+      if (!isLiveTelemetry || isTelemetryStale) return null;
+      if (
+        temp === null ||
+        rh === null ||
+        wind === null ||
+        rain === null ||
+        ffmc === null ||
+        dmc === null
+      ) {
+        return null;
+      }
+      return evaluateModelHazard({
         temp,
         rh,
         wind,
         rain,
         ffmc,
         dmc,
-        dc,
-        isi,
-      }),
-    [temp, rh, wind, rain, ffmc, dmc, dc, isi]
+        dc: typeof dc === 'number' && Number.isFinite(dc) ? dc : undefined,
+        isi: typeof isi === 'number' && Number.isFinite(isi) ? isi : undefined,
+      });
+    },
+    [isLiveTelemetry, isTelemetryStale, temp, rh, wind, rain, ffmc, dmc, dc, isi]
   );
 
   // Real-time C Header AI Model 2: grenvis_sensor_model.h (FLORA Neural Network)
+  // Evaluated ONLY when genuine live telemetry is actively connected, fresh, and complete
   const floraResult = useMemo(
-    () => evaluateFloraSensorModel(temp, rh, soilMoisture),
-    [temp, rh, soilMoisture]
+    () => {
+      if (!isLiveTelemetry || isTelemetryStale) return null;
+      if (temp === null || rh === null || soilMoisture === null) return null;
+      return evaluateFloraSensorModel(temp, rh, soilMoisture);
+    },
+    [isLiveTelemetry, isTelemetryStale, temp, rh, soilMoisture]
   );
 
-  // Historical telemetry buffer initialized from REAL_DATASET_PRESETS
-  const [history, setHistory] = useState<TelemetryHistoryPoint[]>(() => {
-    const now = Date.now();
-    return Array.from({ length: 24 }, (_, idx) => {
-      const preset = REAL_DATASET_PRESETS[idx % REAL_DATASET_PRESETS.length];
-      const jitterT = Number((preset.temp + Math.sin(idx) * 0.8).toFixed(1));
-      const jitterRh = Number(Math.max(15, Math.min(99, preset.rh + Math.cos(idx) * 1.5)).toFixed(1));
-      const res = evaluateModelHazard({
-        temp: jitterT,
-        rh: jitterRh,
-        wind: preset.wind,
-        rain: preset.rain,
-        ffmc: preset.ffmc,
-        dmc: preset.dmc,
-        dc: preset.dc,
-        isi: preset.isi,
-      });
-      return {
-        timestamp: new Date(now - (24 - idx) * 60000).toISOString(),
-        temperature: jitterT,
-        humidity: jitterRh,
-        soil_moisture: preset.soilMoisture,
-        wind: preset.wind,
-        rain: preset.rain,
-        ffmc: preset.ffmc,
-        dmc: preset.dmc,
-        dc: preset.dc,
-        isi: preset.isi,
-        sensor_risk: res.riskLevel,
-        sensor_confidence: res.confidence,
-        vision_prediction: preset.visionPrediction,
-      };
-    });
-  });
+  // Historical telemetry buffer initialized empty (populated solely by genuine telemetry)
+  const [history, setHistory] = useState<TelemetryHistoryPoint[]>([]);
 
-  // Push new point into history when parameters change or every 6s
+  // Push new point into history when genuine inference or telemetry arrives
   const appendSnapshotToHistory = useCallback(
     (
       tVal = temp,
@@ -351,6 +555,18 @@ export const App: React.FC = () => {
       isiVal = isi,
       visPred = visionPrediction
     ) => {
+      if (!isLiveTelemetry || isTelemetryStale) return;
+      if (
+        tVal === null ||
+        rhVal === null ||
+        soilVal === null ||
+        wVal === null ||
+        rVal === null ||
+        ffmcVal === null ||
+        dmcVal === null
+      ) {
+        return;
+      }
       const res = evaluateModelHazard({
         temp: tVal,
         rh: rhVal,
@@ -358,9 +574,10 @@ export const App: React.FC = () => {
         rain: rVal,
         ffmc: ffmcVal,
         dmc: dmcVal,
-        dc: dcVal,
-        isi: isiVal,
+        dc: typeof dcVal === 'number' && Number.isFinite(dcVal) ? dcVal : undefined,
+        isi: typeof isiVal === 'number' && Number.isFinite(isiVal) ? isiVal : undefined,
       });
+      if (!res) return;
       const pt: TelemetryHistoryPoint = {
         timestamp: new Date().toISOString(),
         temperature: tVal,
@@ -368,116 +585,18 @@ export const App: React.FC = () => {
         soil_moisture: soilVal,
         wind: wVal,
         rain: rVal,
-        ffmc: ffmcVal,
-        dmc: dmcVal,
-        dc: dcVal,
-        isi: isiVal,
+        ffmc: Number(ffmcVal.toFixed(1)),
+        dmc: Number(dmcVal.toFixed(1)),
+        dc: typeof dcVal === 'number' && Number.isFinite(dcVal) ? Number(dcVal.toFixed(1)) : 0,
+        isi: typeof isiVal === 'number' && Number.isFinite(isiVal) ? Number(isiVal.toFixed(1)) : 0,
         sensor_risk: res.riskLevel,
         sensor_confidence: res.confidence,
-        vision_prediction: visPred,
+        vision_prediction: typeof visPred === 'string' ? visPred : 'No Detection',
       };
       setHistory((prev) => [...prev.slice(-49), pt]);
     },
-    [temp, rh, soilMoisture, wind, rain, ffmc, dmc, dc, isi, visionPrediction]
+    [isLiveTelemetry, isTelemetryStale, temp, rh, soilMoisture, wind, rain, ffmc, dmc, dc, isi, visionPrediction]
   );
-
-  // Select a preset scenario from forestfires.csv
-  const handleSelectPreset = useCallback((presetId: string) => {
-    const found = REAL_DATASET_PRESETS.find((p) => p.id === presetId);
-    if (!found) return;
-    setActivePresetId(found.id);
-    setTemp(found.temp);
-    setRh(found.rh);
-    setWind(found.wind);
-    setRain(found.rain);
-    setFfmc(found.ffmc);
-    setDmc(found.dmc);
-    setDc(found.dc);
-    setIsi(found.isi);
-    setSoilMoisture(found.soilMoisture);
-    setVisionPrediction(found.visionPrediction);
-    setVisionProbs({
-      healthy: found.visionHealthy,
-      smoke: found.visionSmoke,
-      fire: found.visionFire,
-    });
-    appendSnapshotToHistory(
-      found.temp,
-      found.rh,
-      found.soilMoisture,
-      found.wind,
-      found.rain,
-      found.ffmc,
-      found.dmc,
-      found.dc,
-      found.isi,
-      found.visionPrediction
-    );
-    showToast(`Preset dimuat: ${found.name}`);
-  }, [appendSnapshotToHistory, showToast]);
-
-  // Interactive slider change handler
-  const handleChangeParam = useCallback((
-    field: 'temp' | 'rh' | 'wind' | 'rain' | 'ffmc' | 'dmc' | 'soilMoisture',
-    value: number
-  ) => {
-    setActivePresetId('custom');
-    let nextTemp = temp;
-    let nextRh = rh;
-    let nextWind = wind;
-    let nextRain = rain;
-    let nextFfmc = ffmc;
-    let nextDmc = dmc;
-    let nextSoil = soilMoisture;
-
-    if (field === 'temp') nextTemp = value;
-    if (field === 'rh') nextRh = value;
-    if (field === 'wind') nextWind = value;
-    if (field === 'rain') nextRain = value;
-    if (field === 'ffmc') nextFfmc = value;
-    if (field === 'dmc') nextDmc = value;
-    if (field === 'soilMoisture') nextSoil = value;
-
-    const derived = computeFwiComponents({
-      temp: nextTemp,
-      rh: nextRh,
-      wind: nextWind,
-      rain: nextRain,
-      soilMoisture: nextSoil,
-      ffmcOverride: nextFfmc,
-      dmcOverride: nextDmc,
-    });
-
-    setTemp(nextTemp);
-    setRh(nextRh);
-    setWind(nextWind);
-    setRain(nextRain);
-    setFfmc(nextFfmc);
-    setDmc(nextDmc);
-    setDc(derived.dc);
-    setIsi(derived.isi);
-    setSoilMoisture(nextSoil);
-
-    const evalRes = evaluateModelHazard({
-      temp: nextTemp,
-      rh: nextRh,
-      wind: nextWind,
-      rain: nextRain,
-      ffmc: nextFfmc,
-      dmc: nextDmc,
-    });
-
-    if (evalRes.riskLevel === 'HIGH' && nextFfmc >= 93.5) {
-      setVisionPrediction('Active Surface Fire');
-      setVisionProbs({ healthy: 3.2, smoke: 18.4, fire: 78.4 });
-    } else if (evalRes.riskLevel === 'HIGH') {
-      setVisionPrediction('Smoke Plume Detected');
-      setVisionProbs({ healthy: 8.5, smoke: 84.1, fire: 7.4 });
-    } else {
-      setVisionPrediction('Healthy Forest Canopy');
-      setVisionProbs({ healthy: 93.6, smoke: 4.8, fire: 1.6 });
-    }
-  }, [temp, rh, wind, rain, ffmc, dmc, soilMoisture]);
 
   // Scroll spy for sidebar with requestAnimationFrame throttling to eliminate layout thrashing
   useEffect(() => {
@@ -515,9 +634,33 @@ export const App: React.FC = () => {
   }, []);
 
   const scrollToSection = (id: string) => {
-    const el = document.getElementById(id);
-    if (el) el.scrollIntoView({ behavior: 'smooth' });
+    setActiveSection(id);
     setMobileMenuOpen(false);
+
+    const tryScroll = () => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth' });
+        return true;
+      }
+      return false;
+    };
+
+    if (tryScroll()) return;
+
+    // If element is not rendered in current tab (e.g. filtered view), return to overview and poll
+    if (currentTab !== 'overview' && currentTab !== 'all') {
+      setCurrentTab('overview');
+    }
+
+    let attempts = 0;
+    const maxAttempts = 15;
+    const interval = setInterval(() => {
+      attempts++;
+      if (tryScroll() || attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, 40);
   };
 
   // Phase 2B.2: Stop active camera stream and abort pending inference strictly on unmount
@@ -594,10 +737,7 @@ export const App: React.FC = () => {
   const handleStartCamera = async () => {
     setInferenceError(null);
     setIsVideoReady(false);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-    }
+    setPreviewUrl(null);
     setCapturedBlob(null);
     setCaptureSource('none');
 
@@ -664,9 +804,6 @@ export const App: React.FC = () => {
         videoRef.current.srcObject = null;
       }
       setIsVideoReady(false);
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
       const url = URL.createObjectURL(blob);
       setCapturedBlob(blob);
       setPreviewUrl(url);
@@ -696,9 +833,6 @@ export const App: React.FC = () => {
       return;
     }
 
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
     const url = URL.createObjectURL(file);
     setCapturedBlob(file);
     setPreviewUrl(url);
@@ -712,10 +846,7 @@ export const App: React.FC = () => {
   // Reset / retake photo
   const handleRetake = () => {
     handleStopCamera();
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-    }
+    setPreviewUrl(null);
     setCapturedBlob(null);
     setCaptureSource('none');
     setCameraStatus('idle');
@@ -792,66 +923,13 @@ export const App: React.FC = () => {
     }
   };
 
-  // Unified Camera capture action
-  const handleTriggerCameraScan = () => {
-    if (cameraStatus === 'streaming') {
-      handleCaptureFromVideo();
-    } else if (capturedBlob) {
-      handleAnalyzeImage();
-    } else {
-      handleStartCamera();
-    }
-  };
 
-  // L298N Rail Carriage commands (OUT3 & OUT4)
-  const handleRailCommand = async (cmd: 'L' | 'R' | 'S' | 'C') => {
-    if (cmd === 'C') {
-      await publishMqttCommand('C');
-      showToast("Perintah 'C' terkirim ke ESP32: Trigger Capture Foto Kamera");
-      handleTriggerCameraScan();
-      return;
-    }
+  // L298N Rail Carriage commands (OUT3 & OUT4) — Fail-Closed Safety Gate
+  const handleRailCommand = (cmd: 'L' | 'R' | 'S' | 'C') => {
     setLastCommand(cmd);
-    const sent = await publishMqttCommand(cmd);
-
-    if (cmd === 'L') {
-      if (limitLeft) {
-        showToast('Limit Switch Kiri (SW1) aktif! Gerakan motor OUT3/OUT4 diblokir.');
-        return;
-      }
-      const nextPos = Math.max(0, railPositionMm - 200);
-      setRailPositionMm(nextPos);
-      setLimitLeft(nextPos <= 0);
-      setLimitRight(false);
-      setMovementStatus('left_command_sent');
-      showToast(
-        sent
-          ? `Perintah 'L' terkirim ke ESP32 L298N (OUT3 & OUT4) → Rel ke kiri (${nextPos} mm)`
-          : `Perintah 'L' lokal → Posisi rel: ${nextPos} mm`
-      );
-    } else if (cmd === 'R') {
-      if (limitRight) {
-        showToast('Limit Switch Kanan (SW2) aktif! Gerakan motor OUT3/OUT4 diblokir.');
-        return;
-      }
-      const nextPos = Math.min(1200, railPositionMm + 200);
-      setRailPositionMm(nextPos);
-      setLimitRight(nextPos >= 1200);
-      setLimitLeft(false);
-      setMovementStatus('right_command_sent');
-      showToast(
-        sent
-          ? `Perintah 'R' terkirim ke ESP32 L298N (OUT3 & OUT4) → Rel ke kanan (${nextPos} mm)`
-          : `Perintah 'R' lokal → Posisi rel: ${nextPos} mm`
-      );
-    } else if (cmd === 'S') {
-      setMovementStatus('stop_command_sent');
-      showToast(
-        sent
-          ? "Perintah 'S' terkirim ke ESP32 L298N (OUT3 & OUT4): Rem Motor Aktif (STOP)"
-          : "Perintah 'S': Motor L298N berhenti (Brake Active)"
-      );
-    }
+    showToast(
+      "Kontrol aktuator dinonaktifkan (Fail-Closed Gate). Dashboard beroperasi dalam mode Read-Only via Backend Gateway."
+    );
   };
 
   // Record manual watering / suppression
@@ -859,28 +937,36 @@ export const App: React.FC = () => {
     const newEvt: WateringLogEvent = {
       id: Date.now(),
       timestamp: new Date().toISOString(),
-      soilBefore: soilMoisture,
+      soilBefore: typeof soilMoisture === 'number' ? soilMoisture : 0,
       note: 'Penyiraman manual & pendinginan zona kanopi tercatat dari konsol',
     };
     setWateringEvents((prev) => [newEvt, ...prev.slice(0, 8)]);
-    const boostedSoil = Math.min(95, Number((soilMoisture + 14).toFixed(1)));
-    const cooledFfmc = Math.max(18.7, Number((ffmc - 5.5).toFixed(1)));
-    setSoilMoisture(boostedSoil);
-    setFfmc(cooledFfmc);
-    showToast('Penyiraman dicatat — Kelembapan tanah meningkat & FFMC menurun');
+    showToast('Penyiraman dicatat — Log pemeliharaan diperbarui');
   };
 
   // Dynamic Alert Banner Config
   const alertBanner = useMemo(() => {
+    if (!isLiveTelemetry || isTelemetryStale || !hazardResult || !floraResult) {
+      return {
+        severity: 'STANDBY',
+        title: isTelemetryStale ? 'Device Offline · Telemetri Stale' : 'Device Offline · Menunggu Data Telemetri',
+        description: 'Konsol siap menerima stream telemetri real time dari backend gateway (/api/telemetry/stream). Model AI model_hazard.h dan grenvis_sensor_model.h akan mengevaluasi risiko segera setelah data sensor aktif diterima.',
+        wrapper: 'bg-[#F1F5F3] border-[#DCE4E1] text-[#2C2922]',
+        badge: 'bg-[#E5EBE8] text-[#4D6A75] border border-[#DCE4E1]',
+        btn: 'bg-[#4E8577] text-white hover:bg-[#3D6E62]',
+        actionText: 'Lihat Status Sensor',
+        actionTarget: 'monitoring',
+      };
+    }
     if (hazardResult.riskLevel === 'HIGH') {
       return {
         severity: 'CRITICAL',
         title: `Peringatan Bahaya Kebakaran Tinggi (model_hazard.h: ${hazardResult.confidence.toFixed(1)}% High Risk)`,
-        description: `FFMC (${ffmc.toFixed(1)}) dan DMC (${dmc.toFixed(1)}) berada di zona penyalaan aktif (Prediksi Kaggle: '${hazardResult.kaggleBinaryPrediction}'). Segera periksa kamera kanopi dan aktifkan protokol mitigasi.`,
+        description: `FFMC (${typeof ffmc === 'number' ? ffmc.toFixed(1) : '--'}) dan DMC (${typeof dmc === 'number' ? dmc.toFixed(1) : '--'}) berada di zona penyalaan aktif (Prediksi Kaggle: '${hazardResult.kaggleBinaryPrediction}'). Segera periksa kamera kanopi dan aktifkan protokol mitigasi.`,
         wrapper: 'bg-[#FEEAEA] border-[#FCCECE] text-[#961C1C]',
         badge: 'bg-[#FCCECE] text-[#961C1C]',
         btn: 'bg-[#961C1C] text-white hover:bg-[#7D1515]',
-        actionText: 'Buka Simulator & SOP',
+        actionText: 'Lihat Dataset & SOP',
         actionTarget: 'benchmarks',
       };
     }
@@ -888,7 +974,7 @@ export const App: React.FC = () => {
       return {
         severity: 'WARNING',
         title: `Status Waspada Mikroklimat & Serasah (Confidence: ${hazardResult.confidence.toFixed(1)}%)`,
-        description: `Kelembapan bahan bakar halus FFMC = ${ffmc.toFixed(1)} dan kelembapan tanah = ${soilMoisture.toFixed(1)}%. Pantau tren suhu (${temp.toFixed(1)}°C) dan kelembapan udara (${rh.toFixed(0)}%).`,
+        description: `Kelembapan bahan bakar halus FFMC = ${typeof ffmc === 'number' ? ffmc.toFixed(1) : '--'} dan kelembapan tanah = ${typeof soilMoisture === 'number' ? soilMoisture.toFixed(1) : '--'}%. Pantau tren suhu (${typeof temp === 'number' ? temp.toFixed(1) : '--'}°C) dan kelembapan udara (${typeof rh === 'number' ? rh.toFixed(0) : '--'}%).`,
         wrapper: 'bg-[#FEF7E8] border-[#FDE3B5] text-[#8A570C]',
         badge: 'bg-[#FDE3B5] text-[#8A570C]',
         btn: 'bg-[#8A570C] text-white hover:bg-[#704508]',
@@ -899,29 +985,29 @@ export const App: React.FC = () => {
     return {
       severity: 'NORMAL',
       title: `Kondisi Hutan & Mikroklimat Kanopi Optimal (Low Risk: ${hazardResult.lowProbability.toFixed(1)}%)`,
-      description: `Seluruh parameter telemetri berada dalam batas aman Montesinho & FLORA (FFMC: ${ffmc.toFixed(1)}, Soil: ${soilMoisture.toFixed(1)}%, Prediksi Kaggle: 'safe').`,
+      description: `Seluruh parameter telemetri berada dalam batas aman Montesinho (FFMC: ${typeof ffmc === 'number' ? ffmc.toFixed(1) : '--'}, Soil: ${typeof soilMoisture === 'number' ? soilMoisture.toFixed(1) : '--'}%, Prediksi Kaggle: 'safe').`,
       wrapper: 'bg-[#EFF3EF] border-[#A6B49E] text-[#263A35]',
       badge: 'bg-[#A6B49E]/30 text-[#263A35] border border-[#A6B49E]',
       btn: 'bg-[#4E635E] text-white hover:bg-[#3D4F4B]',
       actionText: 'Lihat Telemetri',
       actionTarget: 'monitoring',
     };
-  }, [hazardResult, floraResult, ffmc, dmc, soilMoisture, temp, rh]);
+  }, [isLiveTelemetry, isTelemetryStale, hazardResult, floraResult, ffmc, dmc, soilMoisture, temp, rh]);
 
   const navItems = useMemo(
     () => [
-      { id: 'overview', label: 'Overview Status', badge: hazardResult.riskLevel },
+      { id: 'overview', label: 'Overview Status', badge: hazardResult ? hazardResult.riskLevel : undefined },
       { id: 'bmkg', label: 'BMKG Macro Weather', badge: 'BMKG' },
       { id: 'monitoring', label: 'Live Sensors (FWI & ADC)' },
       { id: 'analysis', label: 'AI Model Analysis (.h)' },
-      { id: 'benchmarks', label: 'Simulator & Kaggle Data', badge: 'AI.H' },
+      { id: 'benchmarks', label: 'Kaggle Dataset Information', badge: 'AI.H' },
       { id: 'cameraCapture', label: 'ESP32-CAM Vision' },
       { id: 'device-control', label: 'L298N Rail Control' },
       { id: 'treatment', label: 'Mitigation & Irrigation' },
       { id: 'history', label: 'Historical Trends' },
       { id: 'devices', label: 'Hardware Topology' },
     ],
-    [hazardResult.riskLevel]
+    [hazardResult]
   );
 
   const renderSidebarContent = (isMobile = false) => (
@@ -936,7 +1022,7 @@ export const App: React.FC = () => {
           </div>
           <div className="min-w-0">
             <span className="text-xs font-bold text-white tracking-wider uppercase block font-display truncate">
-              AGRAPATHA · FLORA
+              AGRAPATHA
             </span>
             <span className="text-[10px] text-[#E2E0CB]/85 block truncate">
               Edge AI Forest &amp; Botanical
@@ -956,21 +1042,129 @@ export const App: React.FC = () => {
 
       {/* Middle Scrollable Section */}
       <div className="flex-1 overflow-y-auto min-h-0 flora-sidebar-scroll pr-1 space-y-5">
-        {/* Navigation Links */}
-        <nav aria-label="Console Sections" className="space-y-1">
+        {/* Primary Dashboards & Models */}
+        <nav aria-label="Primary Dashboards &amp; Models" className="space-y-1">
           <span className="px-2.5 text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB]/70 block mb-2">
-            Console Sections
+            Primary Views &amp; Models
+          </span>
+          <button
+            onClick={() => {
+              setCurrentTab('overview');
+              if (isMobile) setMobileMenuOpen(false);
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
+              currentTab === 'overview'
+                ? 'bg-[#4E8577] text-white shadow-xs border-l-2 border-[#56612E]'
+                : 'text-[#E2E0CB]/85 hover:bg-[#364844]/60 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-2 truncate">
+              <LayoutGrid size={14} className="shrink-0" />
+              <span className="truncate">Dashboard 1: Overview</span>
+            </span>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 bg-[#2C2922] text-[#56612E] border border-[#56612E]/40">
+              3-MODEL
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentTab('model_hazard');
+              if (isMobile) setMobileMenuOpen(false);
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
+              currentTab === 'model_hazard'
+                ? 'bg-[#4E8577] text-white shadow-xs border-l-2 border-[#DC2626]'
+                : 'text-[#E2E0CB]/85 hover:bg-[#364844]/60 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-2 truncate">
+              <Flame size={14} className="shrink-0 text-[#DC2626]" />
+              <span className="truncate">Model 1: Forest Fire</span>
+            </span>
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 ${
+              !hazardResult ? 'bg-[#364844] text-[#E2E0CB]' : hazardResult.riskLevel === 'HIGH' ? 'bg-[#DC2626] text-white' : hazardResult.riskLevel === 'MODERATE' ? 'bg-[#D97706] text-white' : 'bg-[#56612E] text-white'
+            }`}>
+              {hazardResult ? hazardResult.riskLevel : 'STANDBY'}
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentTab('model_botanical');
+              if (isMobile) setMobileMenuOpen(false);
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
+              currentTab === 'model_botanical'
+                ? 'bg-[#4E8577] text-white shadow-xs border-l-2 border-[#56612E]'
+                : 'text-[#E2E0CB]/85 hover:bg-[#364844]/60 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-2 truncate">
+              <Leaf size={14} className="shrink-0 text-[#56612E]" />
+              <span className="truncate">Model 2: Botanical</span>
+            </span>
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 ${floraResult ? 'bg-[#56612E] text-white' : 'bg-[#364844] text-[#E2E0CB]'}`}>
+              {floraResult ? floraResult.sensorRisk.toUpperCase() : 'STANDBY'}
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentTab('model_vision');
+              if (isMobile) setMobileMenuOpen(false);
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
+              currentTab === 'model_vision'
+                ? 'bg-[#4E8577] text-white shadow-xs border-l-2 border-[#4D6A75]'
+                : 'text-[#E2E0CB]/85 hover:bg-[#364844]/60 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-2 truncate">
+              <Camera size={14} className="shrink-0 text-[#4D6A75]" />
+              <span className="truncate">Model 3: Computer Vision</span>
+            </span>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 bg-[#4D6A75] text-white">
+              AI.OPT
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentTab('all');
+              if (isMobile) setMobileMenuOpen(false);
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
+              currentTab === 'all'
+                ? 'bg-[#2C2922] text-white shadow-xs border-l-2 border-[#7E694F]'
+                : 'text-[#E2E0CB]/70 hover:bg-[#364844]/40 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-2 truncate">
+              <Layers size={13} className="shrink-0" />
+              <span className="truncate">All Views (Combined)</span>
+            </span>
+          </button>
+        </nav>
+
+        {/* Navigation Links */}
+        <nav aria-label="Console Sections" className="space-y-1 pt-3 border-t border-[#364844]">
+          <span className="px-2.5 text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB]/70 block mb-2">
+            Section Quick Links
           </span>
           {navItems.map((item) => {
             const isActive = activeSection === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => scrollToSection(item.id)}
+                onClick={() => {
+                  scrollToSection(item.id);
+                  if (isMobile) setMobileMenuOpen(false);
+                }}
                 aria-current={isActive ? 'location' : undefined}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
                   isActive
-                    ? 'bg-[#4E635E] text-white shadow-xs border-l-2 border-[#E2E0CB]'
+                    ? 'bg-[#364844] text-white shadow-xs border-l-2 border-[#E2E0CB]'
                     : 'text-[#E2E0CB]/85 hover:bg-[#364844]/60 hover:text-white'
                 }`}
               >
@@ -988,36 +1182,6 @@ export const App: React.FC = () => {
             );
           })}
         </nav>
-
-        {/* Quick Dataset Presets in Sidebar */}
-        <div className="pt-4 border-t border-[#364844]">
-          <span className="px-2.5 text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB]/70 block mb-2">
-            Kaggle Preset Scenarios
-          </span>
-          <div role="group" aria-label="Kaggle Preset Scenarios" className="space-y-1.5">
-            {REAL_DATASET_PRESETS.map((preset) => {
-              const active = activePresetId === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  onClick={() => handleSelectPreset(preset.id)}
-                  aria-pressed={active}
-                  aria-label={`Pilih skenario preset ${preset.name}`}
-                  className={`w-full px-3 py-2 rounded-xl text-left text-[11px] transition-all cursor-pointer border focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#A6B49E] ${
-                    active
-                      ? 'bg-[#1A2522] border-[#A6B49E] text-white font-bold'
-                      : 'bg-[#1A2522]/50 border-[#364844] text-[#E2E0CB] hover:bg-[#1A2522]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="truncate">{preset.shortName}</span>
-                    <span className="font-tabular text-[10px] text-[#E2E0CB] shrink-0">FFMC {preset.ffmc}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </div>
 
       {/* Bottom System Channel Status */}
@@ -1060,7 +1224,7 @@ export const App: React.FC = () => {
             onClick={() => setMobileMenuOpen(false)}
             role="dialog"
             aria-modal="true"
-            aria-label="Navigasi AGRAPATHA Flora"
+            aria-label="Navigasi AGRAPATHA"
           >
             <div
               className="w-70 h-full bg-[#23312E] shadow-2xl flex flex-col z-50"
@@ -1091,7 +1255,7 @@ export const App: React.FC = () => {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
                       <path d="M12 0 C12 7 17 12 24 12 C17 12 12 17 12 24 C12 17 7 12 0 12 C7 12 12 7 12 0 Z" />
                     </svg>
-                    <span className="truncate">AGRAPATHA × FLORA · Botanical &amp; Forest Fire Intelligence</span>
+                    <span className="truncate">AGRAPATHA · Botanical &amp; Forest Fire Intelligence</span>
                   </span>
                 </div>
                 <h1 className="text-xl sm:text-2xl font-bold text-[#263A35] mt-0.5 tracking-tight font-display">
@@ -1114,53 +1278,145 @@ export const App: React.FC = () => {
                 <span>3D Welcome</span>
               </button>
 
-              <button
-                onClick={() => setMqttModalOpen(true)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs shadow-xs transition-all cursor-pointer ${
-                  isLiveMqtt
-                    ? 'bg-[#EFF3EF] border-[#5DD62C] text-[#263A35] hover:bg-[#E2E0CB]'
-                    : mqttState === 'connected'
-                    ? 'bg-white border-[#A6B49E] text-[#263A35] hover:bg-[#F5F4EE]'
-                    : 'bg-white border-[#D6DCCE] text-[#263A35] hover:bg-[#F5F4EE]'
-                }`}
-                title="Status Koneksi EMQX Cloud MQTT WebSocket (Port 8084). Klik untuk modal pengujian."
-                aria-label="Status Koneksi MQTT"
-              >
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    isLiveMqtt
-                      ? 'bg-[#16A34A] animate-pulse ring-2 ring-[#5DD62C]/40'
-                      : mqttState === 'connected'
-                      ? 'bg-[#0284C7]'
-                      : 'bg-[#D97706] animate-pulse'
-                  }`}
-                />
-                <span className="font-bold font-display text-[11px] uppercase tracking-wider">
-                  {isLiveMqtt ? `ESP32 LIVE · ${activeNodeId || 'MAIN'}` : mqttState === 'connected' ? 'MQTT READY' : 'PRESET / SIMULASI'}
-                </span>
-                <span className="text-[11px] text-[#50645F] font-tabular border-l border-[#D6DCCE] pl-2 hidden sm:inline-block">
-                  {isLiveMqtt && lastLiveTelemetryTime
-                    ? lastLiveTelemetryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                    : 'EMQX Cloud :8084'}
-                </span>
-              </button>
+              {(() => {
+                const deviceConn = getDeviceConnectivityStatus(
+                  isLiveTelemetry,
+                  isTelemetryStale,
+                  gatewayStatus,
+                  gatewayHealth?.mqttConnected ?? false
+                );
+                return (
+                  <div
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs shadow-xs transition-all ${deviceConn.wrapperClass}`}
+                    title={`Status Gateway SSE (/api/telemetry/stream): ${gatewayStatus.toUpperCase()} · Broker EMQX: ${gatewayHealth ? (gatewayHealth.mqttConnected ? 'CONNECTED' : 'DISCONNECTED') : 'CHECKING'}${isTelemetryStale ? ' · TELEMETRI STALE' : ''}`}
+                    aria-label="Status Gateway Telemetri"
+                  >
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${deviceConn.dotClass}`} />
+                    <span className="font-bold font-display text-[11px] uppercase tracking-wider">
+                      {deviceConn.text}
+                    </span>
+                    <span className="text-[11px] text-[#50645F] font-tabular border-l border-[#D6DCCE] pl-2 hidden sm:inline-block">
+                      {isLiveTelemetry && !isTelemetryStale && lastLiveTelemetryTime
+                        ? lastLiveTelemetryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                        : 'SSE /api/stream'}
+                    </span>
+                  </div>
+                );
+              })()}
 
               <LiveClockBadge />
-
-              <button
-                onClick={() => {
-                  const idx = REAL_DATASET_PRESETS.findIndex((p) => p.id === activePresetId);
-                  const next = REAL_DATASET_PRESETS[(idx + 1) % REAL_DATASET_PRESETS.length];
-                  handleSelectPreset(next.id);
-                }}
-                className="px-3.5 py-1.5 rounded-xl bg-[#4E635E] hover:bg-[#3B4D49] text-white text-xs font-semibold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95 whitespace-nowrap focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
-                aria-label="Ganti ke skenario dataset Kaggle berikutnya"
-              >
-                <span aria-hidden="true">↻</span>
-                <span>Ganti Skenario Kaggle</span>
-              </button>
             </div>
           </header>
+
+          {/* 4-Tab Main Navigation Bar (B.4.8 Visual Direction) */}
+          <nav aria-label="Dashboard Primary Tabs" className="mb-5">
+            <div className="flex items-center gap-1.5 p-1.5 bg-[#FFFFFF] border border-[#DCE4E1] rounded-2xl shadow-xs overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setCurrentTab('overview')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  currentTab === 'overview'
+                    ? 'bg-[#4E8577] text-white shadow-xs'
+                    : 'text-[#2C2922] hover:bg-[#F1F5F3] hover:text-[#4E8577]'
+                }`}
+                aria-selected={currentTab === 'overview'}
+              >
+                <LayoutGrid size={14} />
+                <span>Dashboard 1 — System Overview</span>
+                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded-md bg-white/20 font-mono">
+                  3-Model
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTab('model_hazard')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  currentTab === 'model_hazard'
+                    ? 'bg-[#4E8577] text-white shadow-xs'
+                    : 'text-[#2C2922] hover:bg-[#F1F5F3] hover:text-[#4E8577]'
+                }`}
+                aria-selected={currentTab === 'model_hazard'}
+              >
+                <Flame
+                  size={14}
+                  className={currentTab === 'model_hazard' ? 'text-white' : 'text-[#DC2626]'}
+                />
+                <span>Model 1 — Forest Fire Hazard (model_hazard.h)</span>
+                <span
+                  className={`text-[9px] uppercase px-1.5 py-0.5 rounded-md font-mono ${
+                    !hazardResult
+                      ? 'bg-[#E5EBE8] text-[#4D6A75]'
+                      : hazardResult.riskLevel === 'HIGH'
+                      ? 'bg-[#DC2626] text-white'
+                      : hazardResult.riskLevel === 'MODERATE'
+                      ? 'bg-[#D97706] text-white'
+                      : 'bg-[#56612E] text-white'
+                  }`}
+                >
+                  {hazardResult ? hazardResult.riskLevel : 'STANDBY'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTab('model_botanical')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  currentTab === 'model_botanical'
+                    ? 'bg-[#4E8577] text-white shadow-xs'
+                    : 'text-[#2C2922] hover:bg-[#F1F5F3] hover:text-[#4E8577]'
+                }`}
+                aria-selected={currentTab === 'model_botanical'}
+              >
+                <Leaf
+                  size={14}
+                  className={currentTab === 'model_botanical' ? 'text-white' : 'text-[#56612E]'}
+                />
+                <span>Model 2 — Botanical &amp; Environmental (grenvis_sensor_model.h)</span>
+                <span className={`text-[9px] uppercase px-1.5 py-0.5 rounded-md font-mono ${floraResult ? 'bg-[#56612E] text-white' : 'bg-[#E5EBE8] text-[#4D6A75]'}`}>
+                  {floraResult ? floraResult.sensorRisk.toUpperCase() : 'STANDBY'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTab('model_vision')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  currentTab === 'model_vision'
+                    ? 'bg-[#4E8577] text-white shadow-xs'
+                    : 'text-[#2C2922] hover:bg-[#F1F5F3] hover:text-[#4E8577]'
+                }`}
+                aria-selected={currentTab === 'model_vision'}
+              >
+                <Camera
+                  size={14}
+                  className={currentTab === 'model_vision' ? 'text-white' : 'text-[#4D6A75]'}
+                />
+                <span>Model 3 — Computer Vision (mobilenetv2.tflite)</span>
+                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded-md bg-[#4D6A75] text-white font-mono">
+                  {visionPrediction.includes('Fire')
+                    ? 'FIRE'
+                    : visionPrediction.includes('Smoke')
+                    ? 'SMOKE'
+                    : 'SAFE'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTab('all')}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ml-auto ${
+                  currentTab === 'all'
+                    ? 'bg-[#2C2922] text-white shadow-xs'
+                    : 'text-[#4D6A75] hover:bg-[#F1F5F3]'
+                }`}
+                title="Tampilkan seluruh seksi dalam satu layar"
+              >
+                <Layers size={13} />
+                <span>All Views</span>
+              </button>
+            </div>
+          </nav>
 
           {/* Realtime Status Alert Banner */}
           <div className="mb-6">
@@ -1210,15 +1466,206 @@ export const App: React.FC = () => {
           </div>
 
           <div className="space-y-8 sm:space-y-10">
+            {/* THREE-MODEL SUMMARIES (DASHBOARD 1 OVERVIEW & NAVIGATION) */}
+            {(currentTab === 'overview' || currentTab === 'all') && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Model 1 Card */}
+                <div className="agra-card p-4 sm:p-5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold text-[#4E8577] uppercase tracking-wider flex items-center gap-1.5">
+                        <Flame size={12} className="text-[#DC2626]" />
+                        <span>Model 1 · Edge RF</span>
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          !isLiveTelemetry || isTelemetryStale || !hazardResult
+                            ? 'bg-[#E5EBE8] text-[#4D6A75] border border-[#DCE4E1]'
+                            : hazardResult.riskLevel === 'HIGH'
+                            ? 'agra-badge-high'
+                            : hazardResult.riskLevel === 'MODERATE'
+                            ? 'agra-badge-moderate'
+                            : 'agra-badge-safe'
+                        }`}
+                      >
+                        {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.riskLevel} RISK` : 'STANDBY'}
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-bold text-[#2C2922] font-display">
+                      Forest Fire Hazard (<code className="text-xs font-mono text-[#4E8577]">model_hazard.h</code>)
+                    </h3>
+                    <p className="text-[11px] text-[#4D6A75] mt-1 leading-snug">
+                      {isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' && typeof dmc === 'number' && typeof isi === 'number'
+                        ? `100-Tree Random Forest · FFMC ${ffmc.toFixed(1)}, DMC ${dmc.toFixed(1)}, ISI ${isi.toFixed(1)}`
+                        : 'Menunggu pembacaan telemetri aktif gateway untuk inferensi model_hazard.h'}
+                    </p>
+
+                    {/* Probability Mini-Bar */}
+                    <div className="space-y-1.5 mt-3 pt-2 border-t border-[#DCE4E1]">
+                      <div className="flex justify-between text-[10px] font-medium text-[#4D6A75]">
+                        <span>Proba High: {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.highProbability.toFixed(1)}%` : '--'}</span>
+                        <span>Conf: {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.confidence.toFixed(1)}%` : '--'}</span>
+                      </div>
+                      <div className="h-1.5 bg-[#E5EBE8] rounded-full overflow-hidden flex">
+                        <div
+                          style={{ width: `${isLiveTelemetry && !isTelemetryStale && hazardResult ? hazardResult.lowProbability : 0}%` }}
+                          className="bg-[#56612E]"
+                          title={`Low: ${isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.lowProbability.toFixed(1)}%` : '--'}`}
+                        />
+                        <div
+                          style={{ width: `${isLiveTelemetry && !isTelemetryStale && hazardResult ? hazardResult.moderateProbability : 0}%` }}
+                          className="bg-[#D97706]"
+                          title={`Moderate: ${isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.moderateProbability.toFixed(1)}%` : '--'}`}
+                        />
+                        <div
+                          style={{ width: `${isLiveTelemetry && !isTelemetryStale && hazardResult ? hazardResult.highProbability : 0}%` }}
+                          className="bg-[#DC2626]"
+                          title={`High: ${isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.highProbability.toFixed(1)}%` : '--'}`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentTab('model_hazard');
+                    }}
+                    className="mt-4 pt-2.5 border-t border-[#DCE4E1] text-[11px] font-bold text-[#4E8577] hover:text-[#56612E] flex items-center justify-between cursor-pointer"
+                  >
+                    <span>Buka Model 1 Hazard &amp; Detail</span>
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+
+                {/* Model 2 Card */}
+                <div className="agra-card p-4 sm:p-5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold text-[#56612E] uppercase tracking-wider flex items-center gap-1.5">
+                        <Leaf size={12} className="text-[#56612E]" />
+                        <span>Model 2 · ANN Microclimate</span>
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        !isLiveTelemetry || isTelemetryStale || !floraResult ? 'bg-[#E5EBE8] text-[#4D6A75] border border-[#DCE4E1]' : 'agra-badge-safe'
+                      }`}>
+                        {isLiveTelemetry && !isTelemetryStale && floraResult ? floraResult.sensorRisk.toUpperCase() : 'STANDBY'}
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-bold text-[#2C2922] font-display">
+                      Botanical &amp; Soil Risk (<code className="text-xs font-mono text-[#4E8577]">grenvis_sensor_model.h</code>)
+                    </h3>
+                    <p className="text-[11px] text-[#4D6A75] mt-1 leading-snug">
+                      {isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' && typeof temp === 'number'
+                        ? `ANN Health Index · Soil ${soilMoisture.toFixed(1)}% (${soilMoisture >= 30 ? 'Hidrasi Aman' : 'Defisit'}), Temp ${temp.toFixed(1)}°C`
+                        : 'Menunggu pembacaan sensor tanah dan DHT22 untuk evaluasi grenvis_sensor_model.h'}
+                    </p>
+
+                    {/* Hydration / Confidence Indicator */}
+                    <div className="space-y-1.5 mt-3 pt-2 border-t border-[#DCE4E1]">
+                      <div className="flex justify-between text-[10px] font-medium text-[#4D6A75]">
+                        <span>Hydration: {isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' ? (soilMoisture >= 30 ? 'Optimal' : 'Defisit Hidrasi') : '--'}</span>
+                        <span>Conf: {isLiveTelemetry && !isTelemetryStale && floraResult ? `${floraResult.sensorConfidence.toFixed(1)}%` : '--'}</span>
+                      </div>
+                      <div className="h-1.5 bg-[#E5EBE8] rounded-full overflow-hidden">
+                        <div
+                          style={{ width: `${isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' ? Math.min(100, Math.max(0, soilMoisture)) : 0}%` }}
+                          className={`h-full ${
+                            typeof soilMoisture === 'number'
+                              ? soilMoisture < 25 ? 'bg-[#DC2626]' : soilMoisture < 35 ? 'bg-[#D97706]' : 'bg-[#56612E]'
+                              : 'bg-[#94A3B8]'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentTab('model_botanical');
+                    }}
+                    className="mt-4 pt-2.5 border-t border-[#DCE4E1] text-[11px] font-bold text-[#4E8577] hover:text-[#56612E] flex items-center justify-between cursor-pointer"
+                  >
+                    <span>Buka Model 2 Botani &amp; Irigasi</span>
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+
+                {/* Model 3 Card */}
+                <div className="agra-card p-4 sm:p-5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold text-[#4D6A75] uppercase tracking-wider flex items-center gap-1.5">
+                        <Camera size={12} className="text-[#4D6A75]" />
+                        <span>Model 3 · Vision TFLite</span>
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full agra-badge-skyline">
+                        {visionPrediction.includes('Fire')
+                          ? 'FIRE DETECTED'
+                          : visionPrediction.includes('Smoke')
+                          ? 'SMOKE DETECTED'
+                          : 'OPTICAL CLEAR'}
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-bold text-[#2C2922] font-display">
+                      Computer Vision (<code className="text-xs font-mono text-[#4E8577]">mobilenetv2.tflite</code>)
+                    </h3>
+                    <p className="text-[11px] text-[#4D6A75] mt-1 leading-snug">
+                      Railway Cloud API · Frame Status: {cameraStatus === 'streaming' ? 'Live Stream' : previewUrl ? 'Captured Frame' : 'Standby / Ready'}
+                    </p>
+
+                    {/* Optical Proba Mini-Bar */}
+                    <div className="space-y-1.5 mt-3 pt-2 border-t border-[#DCE4E1]">
+                      <div className="flex justify-between text-[10px] font-medium text-[#4D6A75]">
+                        <span>Smoke: {visionProbs.smoke.toFixed(1)}%</span>
+                        <span>Fire: {visionProbs.fire.toFixed(1)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-[#E5EBE8] rounded-full overflow-hidden flex">
+                        <div
+                          style={{ width: `${visionProbs.healthy}%` }}
+                          className="bg-[#56612E]"
+                          title={`Healthy: ${visionProbs.healthy.toFixed(1)}%`}
+                        />
+                        <div
+                          style={{ width: `${visionProbs.smoke}%` }}
+                          className="bg-[#D97706]"
+                          title={`Smoke: ${visionProbs.smoke.toFixed(1)}%`}
+                        />
+                        <div
+                          style={{ width: `${visionProbs.fire}%` }}
+                          className="bg-[#DC2626]"
+                          title={`Fire: ${visionProbs.fire.toFixed(1)}%`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentTab('model_vision');
+                    }}
+                    className="mt-4 pt-2.5 border-t border-[#DCE4E1] text-[11px] font-bold text-[#4E8577] hover:text-[#56612E] flex items-center justify-between cursor-pointer"
+                  >
+                    <span>Buka Model 3 Kamera &amp; Inferensi</span>
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* 1. OVERVIEW HERO CARD (.flora-card-hero) */}
-            <section
-              id="overview"
+            {(currentTab === 'overview' || currentTab === 'all') && (
+              <>
+                <section
+                  id="overview"
               className="scroll-mt-6 sm:scroll-mt-8 flora-card-hero p-5 sm:p-6 lg:p-7 flex flex-col justify-between gap-6 transition-all"
             >
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-[#364844]">
                 <div>
                   <span className="text-[10px] font-bold uppercase tracking-widest text-[#E2E0CB] block">
-                    AGRAPATHA × FLORA · Montesinho FWI &amp; Microclimate Overview
+                    AGRAPATHA · Montesinho FWI &amp; Microclimate Overview
                   </span>
                   <h2 className="text-xl lg:text-2xl font-bold font-display text-white tracking-tight mt-1">
                     Forest Fire Hazard &amp; Environmental Intelligence
@@ -1226,10 +1673,10 @@ export const App: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2 self-start md:self-auto shrink-0 flex-wrap">
                   <span className="text-[11px] text-[#E2E0CB]/90 font-tabular px-2.5 py-1 rounded-xl bg-[#1A2522] border border-[#364844]">
-                    Kaggle Label: {hazardResult.kaggleBinaryPrediction}
+                    Kaggle Label: {isLiveTelemetry && !isTelemetryStale && hazardResult ? hazardResult.kaggleBinaryPrediction : 'STANDBY'}
                   </span>
                   <span className="text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-[#1A2522] text-[#E2E0CB] border border-[#364844]">
-                    {hazardResult.riskLevel} Priority
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.riskLevel} Priority` : 'STANDBY'}
                   </span>
                 </div>
               </div>
@@ -1243,14 +1690,22 @@ export const App: React.FC = () => {
                     </span>
                   </div>
                   <h3 className="text-lg lg:text-xl font-bold font-display text-white leading-snug">
-                    {hazardResult.riskLevel === 'HIGH'
-                      ? 'Bahaya Kebakaran Hutan Tinggi — Zona Kritis Penyalaan Serasah (FFMC ≥ 89.5)'
-                      : hazardResult.riskLevel === 'MODERATE'
-                      ? 'Risiko Kebakaran Menengah — Transisi Pengeringan Bahan Bakar Halus'
-                      : 'Kondisi Kanopi & Serasah Hutan Stabil — Risiko Penyalaan Rendah'}
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult
+                      ? hazardResult.riskLevel === 'HIGH'
+                        ? 'Bahaya Kebakaran Hutan Tinggi — Zona Kritis Penyalaan Serasah (FFMC ≥ 89.5)'
+                        : hazardResult.riskLevel === 'MODERATE'
+                        ? 'Risiko Kebakaran Menengah — Transisi Pengeringan Bahan Bakar Halus'
+                        : 'Kondisi Kanopi & Serasah Hutan Stabil — Risiko Penyalaan Rendah'
+                      : 'Sistem Monitoring Siaga — Menunggu Telemetri Live Gateway'}
                   </h3>
                   <p className="text-xs lg:text-sm text-[#E2E0CB]/90 leading-relaxed max-w-2xl">
-                    Berdasarkan eksekusi langsung 100 pohon keputusan pada <code className="text-[#A6B49E] font-mono">model_hazard.h</code> dengan vektor input <code className="text-[#E2E0CB] font-mono">[{temp.toFixed(1)}°C, {rh.toFixed(0)}%, {wind.toFixed(1)} km/h, {rain.toFixed(1)} mm, FFMC {ffmc.toFixed(1)}, DMC {dmc.toFixed(1)}]</code>, probabilitas kelas adalah <strong>High {hazardResult.highProbability.toFixed(1)}%</strong>, <strong>Moderate {hazardResult.moderateProbability.toFixed(1)}%</strong>, dan <strong>Low {hazardResult.lowProbability.toFixed(1)}%</strong>.
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult && typeof temp === 'number' && typeof rh === 'number' && typeof wind === 'number' && typeof rain === 'number' && typeof ffmc === 'number' && typeof dmc === 'number' ? (
+                      <>
+                        Berdasarkan eksekusi langsung 100 pohon keputusan pada <code className="text-[#A6B49E] font-mono">model_hazard.h</code> dengan vektor input <code className="text-[#E2E0CB] font-mono">[{temp.toFixed(1)}°C, {rh.toFixed(0)}%, {wind.toFixed(1)} km/h, {rain.toFixed(1)} mm, FFMC {ffmc.toFixed(1)}, DMC {dmc.toFixed(1)}]</code>, probabilitas kelas adalah <strong>High {hazardResult.highProbability.toFixed(1)}%</strong>, <strong>Moderate {hazardResult.moderateProbability.toFixed(1)}%</strong>, dan <strong>Low {hazardResult.lowProbability.toFixed(1)}%</strong>.
+                      </>
+                    ) : (
+                      'Evaluasi live model_hazard.h dan model_botanical.h menunggu aliran data telemetri valid dari gateway. Hasil prediksi tidak ditampilkan saat disconnected atau stale.'
+                    )}
                   </p>
 
                   {/* Telemetry Pill Strip */}
@@ -1260,49 +1715,49 @@ export const App: React.FC = () => {
                         <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shrink-0" />
                         <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">1. Suhu (DHT22)</span>
                       </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{temp.toFixed(1)}°C</span>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{isLiveTelemetry && !isTelemetryStale && typeof temp === 'number' ? `${temp.toFixed(1)}°C` : 'Unavailable'}</span>
                     </div>
                     <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#0284C7] shrink-0" />
                         <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">2. RH Udara</span>
                       </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{rh.toFixed(1)}%</span>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{isLiveTelemetry && !isTelemetryStale && typeof rh === 'number' ? `${rh.toFixed(1)}%` : 'Unavailable'}</span>
                     </div>
                     <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#84CC16] shrink-0" />
                         <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">3. Tanah (v1.2)</span>
                       </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{soilMoisture.toFixed(1)}%</span>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' ? `${soilMoisture.toFixed(1)}%` : 'Unavailable'}</span>
                     </div>
                     <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#38BDF8] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">4. Hujan (FC-37)</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#A855F7] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">4. Gas (MQ-135)</span>
                       </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{rain.toFixed(1)} mm/h</span>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{isLiveTelemetry && !isTelemetryStale ? (typeof gasPpm === 'number' ? `${gasPpm.toFixed(0)} ppm` : typeof mq135Raw === 'number' ? `${mq135Raw.toFixed(0)} ADC` : 'Unavailable') : 'Unavailable'}</span>
                     </div>
                     <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#EAB308] shrink-0" />
-                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">5. Cahaya (LDR)</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
+                        <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">5. Flame Sensor</span>
                       </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{lightLux.toLocaleString()} Lux</span>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{isLiveTelemetry && !isTelemetryStale && typeof flameDetected === 'number' ? (flameDetected > 0 ? 'FLAME' : 'SAFE') : 'Unavailable'}</span>
                     </div>
                     <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#14B8A6] shrink-0" />
                         <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">Angin Ambien</span>
                       </div>
-                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{wind.toFixed(1)} km/h</span>
+                      <span className="font-bold font-tabular text-white text-xs whitespace-nowrap shrink-0">{isLiveTelemetry && !isTelemetryStale && typeof wind === 'number' ? `${wind.toFixed(1)} km/h` : 'Unavailable'}</span>
                     </div>
                     <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
                         <span className="text-[#E2E0CB] text-[11px] font-semibold truncate">FFMC Serasah</span>
                       </div>
-                      <span className="font-bold font-tabular text-[#E2E0CB] text-xs whitespace-nowrap shrink-0">{ffmc.toFixed(1)}</span>
+                      <span className="font-bold font-tabular text-[#E2E0CB] text-xs whitespace-nowrap shrink-0">{isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' ? ffmc.toFixed(1) : 'Unavailable'}</span>
                     </div>
                     <div className="bg-[#1A2522] border border-[#364844] hover:border-[#818C78] px-2.5 py-2 rounded-xl flex items-center justify-between gap-1.5 text-xs min-h-10.5 shadow-2xs transition-colors min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
@@ -1321,20 +1776,24 @@ export const App: React.FC = () => {
                   </span>
                   <div
                     className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border my-2 font-display ${
-                      hazardResult.riskLevel === 'HIGH'
+                      !isLiveTelemetry || isTelemetryStale || !hazardResult
+                        ? 'bg-[#1A2522] text-[#94A3B8] border-[#364844]'
+                        : hazardResult.riskLevel === 'HIGH'
                         ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
                         : hazardResult.riskLevel === 'MODERATE'
                         ? 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]'
                         : 'bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]'
                     }`}
                   >
-                    {hazardResult.riskLevel} RISK
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.riskLevel} RISK` : 'STANDBY'}
                   </div>
                   <span className="text-[11px] text-[#E2E0CB]/90 font-tabular mt-0.5">
-                    {hazardResult.confidence.toFixed(2)}% confidence
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.confidence.toFixed(2)}% confidence` : '--'}
                   </span>
                   <p className="text-[10px] text-[#E2E0CB]/70 mt-2 m-0 leading-tight">
-                    Evaluated via 100-Tree C Random Forest (<code className="font-mono">model_hazard.h</code>) &amp; FLORA MLP (<code className="font-mono">{floraResult.sensorRisk}</code>).
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult && floraResult
+                      ? <>Evaluated via 100-Tree C Random Forest (<code className="font-mono">model_hazard.h</code>) &amp; Botanical MLP (<code className="font-mono">{floraResult.sensorRisk}</code>).</>
+                      : 'Inference Standby · Menunggu Telemetri'}
                   </p>
                 </div>
               </div>
@@ -1346,10 +1805,14 @@ export const App: React.FC = () => {
                     1. Meteorology (Montesinho)
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
-                    {temp >= 28 ? 'Hot / Dry Air' : temp <= 12 ? 'Cool Canopy' : 'Temperate Optimal'}
+                    {isLiveTelemetry && !isTelemetryStale && typeof temp === 'number'
+                      ? temp >= 28 ? 'Hot / Dry Air' : temp <= 12 ? 'Cool Canopy' : 'Temperate Optimal'
+                      : 'STANDBY'}
                   </span>
                   <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
-                    {temp.toFixed(1)}°C · RH {rh.toFixed(0)}% · Wind {wind.toFixed(1)} km/h
+                    {isLiveTelemetry && !isTelemetryStale && typeof temp === 'number' && typeof rh === 'number' && typeof wind === 'number'
+                      ? `${temp.toFixed(1)}°C · RH ${rh.toFixed(0)}% · Wind ${wind.toFixed(1)} km/h`
+                      : 'Menunggu Telemetri'}
                   </span>
                 </div>
                 <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-20.5">
@@ -1357,10 +1820,14 @@ export const App: React.FC = () => {
                     2. FWI Fuel Codes
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
-                    {ffmc >= 90 ? 'Flammable Litter' : ffmc >= 82 ? 'Moderate Drying' : 'Moist Litter'}
+                    {isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number'
+                      ? ffmc >= 90 ? 'Flammable Litter' : ffmc >= 82 ? 'Moderate Drying' : 'Moist Litter'
+                      : 'STANDBY'}
                   </span>
                   <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
-                    FFMC {ffmc.toFixed(1)} · DMC {dmc.toFixed(1)} · ISI {isi.toFixed(1)}
+                    {isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' && typeof dmc === 'number' && typeof isi === 'number'
+                      ? `FFMC ${ffmc.toFixed(1)} · DMC ${dmc.toFixed(1)} · ISI ${isi.toFixed(1)}`
+                      : 'FWI Engine Standby'}
                   </span>
                 </div>
                 <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-20.5">
@@ -1368,21 +1835,23 @@ export const App: React.FC = () => {
                     3. Edge AI (model_hazard.h)
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
-                    {hazardResult.riskLevel} ({hazardResult.confidence.toFixed(1)}%)
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.riskLevel} (${hazardResult.confidence.toFixed(1)}%)` : 'STANDBY'}
                   </span>
                   <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
-                    Kaggle Label: {hazardResult.kaggleBinaryPrediction}
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult ? `Kaggle Label: ${hazardResult.kaggleBinaryPrediction}` : 'Model Standby'}
                   </span>
                 </div>
                 <div className="bg-[#1A2522] border border-[#364844] p-3 rounded-xl flex flex-col justify-between min-h-20.5">
                   <span className="text-[10px] font-bold text-[#E2E0CB] uppercase tracking-wider block">
-                    4. FLORA Soil &amp; Vision
+                    4. Soil Moisture &amp; Vision
                   </span>
                   <span className="text-xs font-bold text-white block mt-1">
-                    Soil {soilMoisture.toFixed(1)}% ({floraResult.sensorRisk})
+                    {isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' && floraResult
+                      ? `Soil ${soilMoisture.toFixed(1)}% (${floraResult.sensorRisk})`
+                      : 'Soil -- (STANDBY)'}
                   </span>
                   <span className="text-[10px] text-[#E2E0CB]/80 block font-tabular mt-0.5">
-                    {visionPrediction}
+                    {wildfireResult && inferenceStatus === 'success' ? visionPrediction : 'Vision Standby'}
                   </span>
                 </div>
               </div>
@@ -1404,7 +1873,7 @@ export const App: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EFF3EF] border border-[#A6B49E] text-xs font-semibold text-[#263A35]">
                   <span className="w-2 h-2 rounded-full bg-[#4E635E] animate-pulse" />
-                  <span>Calibrated to forestfires.csv (517) &amp; FLORA (9,000)</span>
+                  <span>Calibrated to forestfires.csv (517) &amp; FWI Reference</span>
                 </div>
               </div>
 
@@ -1414,102 +1883,130 @@ export const App: React.FC = () => {
                     title: '1. Suhu Udara (Air Temperature)',
                     shortTitle: 'Suhu Udara (DHT22)',
                     channelTag: 'Sensor 1 · GPIO 19',
-                    value: temp.toFixed(1),
-                    unit: '°C',
-                    statusLabel: temp >= 28 ? 'SUHU TINGGI' : temp <= 15 ? 'SEJUK' : 'OPTIMAL',
-                    isWarn: temp >= 28,
-                    percent: Math.min(100, Math.max(0, (temp / 45) * 100)),
+                    value: formatSensorValue(temp, isLiveTelemetry && !isTelemetryStale, 1),
+                    unit: isLiveTelemetry && !isTelemetryStale ? '°C' : '',
+                    statusLabel: getSensorStatusLabel('temp', temp, isLiveTelemetry && !isTelemetryStale, undefined, isTelemetryStale),
+                    isWarn: isLiveTelemetry && !isTelemetryStale && typeof temp === 'number' && temp >= 28,
+                    percent: isLiveTelemetry && !isTelemetryStale && typeof temp === 'number' ? Math.min(100, Math.max(0, (temp / 45) * 100)) : 0,
                     minLabel: '0°C',
                     maxLabel: '45°C',
-                    barColor: temp >= 28 ? 'bg-[#DC2626]' : temp <= 15 ? 'bg-[#0284C7]' : 'bg-[#4E635E]',
+                    barColor: isLiveTelemetry && !isTelemetryStale && typeof temp === 'number' ? (temp >= 28 ? 'bg-[#DC2626]' : temp <= 15 ? 'bg-[#0284C7]' : 'bg-[#4E635E]') : 'bg-[#94A3B8]',
                     explanation:
                       'Sensor suhu ambien kanopi hutan (DHT22). Mempengaruhi laju pengeringan serasah halus dan evapotranspirasi kanopi.',
                     reference: 'Rentang Sensor: -40 s.d 80°C (±0.5°C)',
-                    extra: isLiveMqtt ? 'Live Stream ESP32' : 'Montesinho Mean: 18.89°C',
+                    extra: isLiveTelemetry && !isTelemetryStale ? 'Live Gateway SSE' : isTelemetryStale ? (lastLiveTelemetryTime ? `Stale · Terakhir: ${lastLiveTelemetryTime.toLocaleTimeString('id-ID')}` : 'Stale Telemetry') : 'No Data Available · Disconnected',
                   },
                   {
                     title: '2. Kelembapan Udara (Relative Humidity)',
                     shortTitle: 'Kelembapan Udara',
                     channelTag: 'Sensor 2 · GPIO 19',
-                    value: rh.toFixed(1),
-                    unit: '%',
-                    statusLabel: rh < 35 ? 'KERING KRITIS' : rh > 80 ? 'LEMBAP TINGGI' : 'MODERAT',
-                    isWarn: rh < 35,
-                    percent: Math.min(100, Math.max(0, rh)),
+                    value: formatSensorValue(rh, isLiveTelemetry && !isTelemetryStale, 1),
+                    unit: isLiveTelemetry && !isTelemetryStale ? '%' : '',
+                    statusLabel: getSensorStatusLabel('rh', rh, isLiveTelemetry && !isTelemetryStale, undefined, isTelemetryStale),
+                    isWarn: isLiveTelemetry && !isTelemetryStale && typeof rh === 'number' && rh < 35,
+                    percent: isLiveTelemetry && !isTelemetryStale && typeof rh === 'number' ? Math.min(100, Math.max(0, rh)) : 0,
                     minLabel: '0%',
                     maxLabel: '100%',
-                    barColor: rh < 35 ? 'bg-[#DC2626]' : rh > 80 ? 'bg-[#0284C7]' : 'bg-[#4E635E]',
+                    barColor: isLiveTelemetry && !isTelemetryStale && typeof rh === 'number' ? (rh < 35 ? 'bg-[#DC2626]' : rh > 80 ? 'bg-[#0284C7]' : 'bg-[#4E635E]') : 'bg-[#94A3B8]',
                     explanation:
                       'Kelembapan relatif udara kanopi hutan (DHT22). Nilai RH < 35% memicu pengeringan serasah dan eskalasi risiko sulutan api.',
                     reference: 'Rentang Sensor: 0 s.d 100% RH (±2%)',
-                    extra: isLiveMqtt ? 'Live Stream ESP32' : 'Montesinho Mean: 44.29%',
+                    extra: isLiveTelemetry && !isTelemetryStale ? 'Live Gateway SSE' : isTelemetryStale ? (lastLiveTelemetryTime ? `Stale · Terakhir: ${lastLiveTelemetryTime.toLocaleTimeString('id-ID')}` : 'Stale Telemetry') : 'No Data Available · Disconnected',
                   },
                   {
                     title: '3. Kelembapan Tanah (Soil Moisture)',
                     shortTitle: 'Kelembapan Tanah',
                     channelTag: 'Sensor 3 · GPIO 34 (ADC1)',
-                    value: soilMoisture.toFixed(1),
-                    unit: '%',
-                    statusLabel: soilMoisture < 25 ? 'TANAH KERING' : soilMoisture > 75 ? 'BASAH JENUH' : 'LEMBAP SUBUR',
-                    isWarn: soilMoisture < 25,
-                    percent: Math.min(100, Math.max(0, soilMoisture)),
+                    value: formatSensorValue(soilMoisture, isLiveTelemetry && !isTelemetryStale, 1),
+                    unit: isLiveTelemetry && !isTelemetryStale ? '%' : '',
+                    statusLabel: getSensorStatusLabel('soil', soilMoisture, isLiveTelemetry && !isTelemetryStale, undefined, isTelemetryStale),
+                    isWarn: isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' && soilMoisture < 25,
+                    percent: isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' ? Math.min(100, Math.max(0, soilMoisture)) : 0,
                     minLabel: '0%',
                     maxLabel: '100%',
-                    barColor: soilMoisture < 25 ? 'bg-[#DC2626]' : soilMoisture > 75 ? 'bg-[#0284C7]' : 'bg-[#84CC16]',
+                    barColor: isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' ? (soilMoisture < 25 ? 'bg-[#DC2626]' : soilMoisture > 75 ? 'bg-[#0284C7]' : 'bg-[#84CC16]') : 'bg-[#94A3B8]',
                     explanation:
                       'Sensor kelembapan tanah kapasitif v1.2 anti-korosi. Menilai kadar air zona rizosfer tanaman dan lapisan humus bawah serasah.',
-                    reference: soilRaw ? `ADC Raw: ${soilRaw} (Wet: 1350, Dry: 3100)` : 'Capacitive v1.2 Kalibrasi ADC',
-                    extra: isLiveMqtt ? 'Hardware Live ADC' : 'FLORA Mean: 67.15%',
+                    reference: isLiveTelemetry && !isTelemetryStale && soilRaw ? `ADC Raw: ${soilRaw} (Wet: 1350, Dry: 3100)` : 'Capacitive v1.2 Kalibrasi ADC',
+                    extra: isLiveTelemetry && !isTelemetryStale ? (soilRaw ? `ADC: ${soilRaw}` : 'Hardware Live ADC') : isTelemetryStale ? (lastLiveTelemetryTime ? `Stale · Terakhir: ${lastLiveTelemetryTime.toLocaleTimeString('id-ID')}` : 'Stale Telemetry') : 'No Data Available · Disconnected',
                   },
                   {
-                    title: '4. Intensitas Hujan (Rain Intensity)',
-                    shortTitle: 'Sensor Hujan (FC-37)',
-                    channelTag: 'Sensor 4 · GPIO 35 (ADC1)',
-                    value: rain.toFixed(1),
-                    unit: `mm/h (${rainStatus})`,
-                    statusLabel: rainStatus === 'HUJAN' ? 'HUJAN LEBAT' : rainStatus === 'GERIMIS' ? 'GERIMIS' : 'TIDAK HUJAN',
-                    isWarn: false,
-                    percent: Math.min(100, Math.max(0, (rain / 25) * 100)),
-                    minLabel: '0.0 mm/h',
-                    maxLabel: '25.0 mm/h',
-                    barColor: rain > 0 ? 'bg-[#0284C7]' : 'bg-[#94A3B8]',
+                    title: '4. Kualitas Udara & Gas (MQ-135)',
+                    shortTitle: 'MQ-135 Gas / Air Quality',
+                    channelTag: 'Sensor 4 · Hardware Terkonfirmasi',
+                    value: isLiveTelemetry && !isTelemetryStale
+                      ? (typeof gasPpm === 'number'
+                          ? formatSensorValue(gasPpm, true, 0)
+                          : typeof mq135Raw === 'number'
+                            ? formatSensorValue(mq135Raw, true, 0)
+                            : 'Unavailable')
+                      : 'Unavailable',
+                    unit: isLiveTelemetry && !isTelemetryStale ? (typeof gasPpm === 'number' ? 'ppm' : typeof mq135Raw === 'number' ? 'ADC' : '') : '',
+                    statusLabel: isLiveTelemetry && !isTelemetryStale
+                      ? (typeof gasPpm === 'number'
+                          ? getSensorStatusLabel('mq135', gasPpm, true)
+                          : typeof mq135Raw === 'number'
+                            ? 'RAW ADC'
+                            : (isTelemetryStale ? 'STALE' : 'NOT CONNECTED'))
+                      : (isTelemetryStale ? 'STALE' : 'NOT CONNECTED'),
+                    isWarn: isLiveTelemetry && !isTelemetryStale && ((typeof gasPpm === 'number' && gasPpm >= 800) || (typeof mq135Raw === 'number' && mq135Raw >= 2500)),
+                    percent: isLiveTelemetry && !isTelemetryStale
+                      ? (typeof gasPpm === 'number'
+                          ? Math.min(100, Math.max(0, (gasPpm / 2000) * 100))
+                          : typeof mq135Raw === 'number'
+                            ? Math.min(100, Math.max(0, (mq135Raw / 4095) * 100))
+                            : 0)
+                      : 0,
+                    minLabel: isLiveTelemetry && !isTelemetryStale && typeof gasPpm === 'number' ? '0 ppm' : '0 ADC',
+                    maxLabel: isLiveTelemetry && !isTelemetryStale && typeof gasPpm === 'number' ? '2000 ppm' : '4095 ADC',
+                    barColor: isLiveTelemetry && !isTelemetryStale && ((typeof gasPpm === 'number' && gasPpm >= 800) || (typeof mq135Raw === 'number' && mq135Raw >= 2500)) ? 'bg-[#DC2626]' : isLiveTelemetry && !isTelemetryStale ? 'bg-[#4E635E]' : 'bg-[#94A3B8]',
                     explanation:
-                      'Deteksi presipitasi rintik dan laju curah hujan kanopi (FC-37). Permukaan basah secara instan menurunkan potensi sulutan api serasah.',
-                    reference: rainRaw ? `ADC Raw: ${rainRaw} (${rainStatus})` : 'FC-37 Plate Multi-sample',
-                    extra: isLiveMqtt ? `Status: ${rainStatus}` : 'Baseline Kering (0.0 mm)',
+                      'Sensor semikonduktor gas dan kualitas udara (MQ-135) untuk monitoring konsentrasi gas berbahaya, asap kebakaran, NH3, NOx, dan alkohol.',
+                    reference: isLiveTelemetry && !isTelemetryStale
+                      ? (typeof gasPpm === 'number'
+                          ? 'Live Telemetry (Calibrated)'
+                          : typeof mq135Raw === 'number'
+                            ? `ADC Raw: ${mq135Raw} (Vmax 3.3V)`
+                            : 'Hardware Live')
+                      : 'Hardware Terkonfirmasi',
+                    extra: isLiveTelemetry && !isTelemetryStale ? 'Live Gateway Stream' : isTelemetryStale ? (lastLiveTelemetryTime ? `Stale · Terakhir: ${lastLiveTelemetryTime.toLocaleTimeString('id-ID')}` : 'Stale Telemetry') : 'No Data Available · Disconnected',
                   },
                   {
-                    title: '5. Radiasi Cahaya (Solar Lux)',
-                    shortTitle: 'Sensor Cahaya (LDR)',
-                    channelTag: 'Sensor 5 · GPIO 36 (VP)',
-                    value: lightLux >= 1000 ? (lightLux / 1000).toFixed(1) + 'k' : String(lightLux),
-                    unit: 'Lux',
-                    statusLabel: lightLux > 45000 ? 'TERIK INTENS' : lightLux > 12000 ? 'TERANG SIANG' : 'TEDUH / MALAM',
-                    isWarn: lightLux > 55000 && temp > 30,
-                    percent: Math.min(100, Math.max(0, (lightLux / 80000) * 100)),
-                    minLabel: '0 Lux',
-                    maxLabel: '80,000 Lux',
-                    barColor: lightLux > 45000 ? 'bg-[#EAB308]' : lightLux > 12000 ? 'bg-[#14B8A6]' : 'bg-[#64748B]',
+                    title: '5. Deteksi Api (Flame Sensor)',
+                    shortTitle: 'Flame Sensor',
+                    channelTag: 'Sensor 5 · Hardware Terkonfirmasi',
+                    value: formatSensorValue(flameDetected, isLiveTelemetry && !isTelemetryStale, 0),
+                    unit: isLiveTelemetry && !isTelemetryStale && typeof flameDetected === 'number' ? (flameDetected > 0 ? 'FLAME' : 'CLEAR') : '',
+                    statusLabel: getSensorStatusLabel('flame', flameDetected, isLiveTelemetry && !isTelemetryStale, undefined, isTelemetryStale),
+                    isWarn: isLiveTelemetry && !isTelemetryStale && typeof flameDetected === 'number' && flameDetected > 0,
+                    percent: isLiveTelemetry && !isTelemetryStale && typeof flameDetected === 'number' ? (flameDetected > 0 ? 100 : 0) : 0,
+                    minLabel: '0 (Aman)',
+                    maxLabel: '1 (Api)',
+                    barColor: isLiveTelemetry && !isTelemetryStale && typeof flameDetected === 'number' && flameDetected > 0 ? 'bg-[#DC2626]' : isLiveTelemetry && !isTelemetryStale ? 'bg-[#4E635E]' : 'bg-[#94A3B8]',
                     explanation:
-                      'Estimasi intensitas cahaya kanopi dan radiasi matahari via LDR Photoresistor. Menghitung evapotranspirasi dan radiasi termal tajuk.',
-                    reference: ldrRaw ? `ADC Raw: ${ldrRaw} (VP ADC1_CH0)` : 'LDR Non-linear Lux Transform',
-                    extra: isLiveMqtt ? 'Hardware Live ADC' : 'Siang Kanopi ~45k Lux',
+                      'Sensor api inframerah (Flame Sensor) dengan sensitivitas spektrum 760–1100 nm untuk deteksi sulutan atau lidah api lokal secara instan.',
+                    reference: isLiveTelemetry && !isTelemetryStale
+                      ? (typeof flameRaw === 'number'
+                          ? `DO Active · Raw ADC: ${flameRaw}`
+                          : 'DO Digital Signal')
+                      : 'Hardware Terkonfirmasi',
+                    extra: isLiveTelemetry && !isTelemetryStale ? 'Live Gateway Stream' : isTelemetryStale ? (lastLiveTelemetryTime ? `Stale · Terakhir: ${lastLiveTelemetryTime.toLocaleTimeString('id-ID')}` : 'Stale Telemetry') : 'No Data Available · Disconnected',
                   },
                   {
                     title: '6. Indeks Serasah & Angin (FWI Engine)',
                     shortTitle: 'Fine Fuel & Wind (FFMC)',
                     channelTag: 'model_hazard.h · FWI',
-                    value: ffmc.toFixed(1),
-                    unit: `idx (Wind ${wind.toFixed(1)} km/h)`,
-                    statusLabel: ffmc >= 89.5 ? 'ZONA PENYALAAN' : ffmc >= 82 ? 'PENGERINGAN' : 'KADAR AIR AMAN',
-                    isWarn: ffmc >= 89.5,
-                    percent: Math.min(100, Math.max(0, ffmc)),
+                    value: formatSensorValue(ffmc, isLiveTelemetry && !isTelemetryStale, 1),
+                    unit: isLiveTelemetry && !isTelemetryStale && typeof wind === 'number' ? `idx (Wind ${wind.toFixed(1)} km/h)` : (isLiveTelemetry && !isTelemetryStale ? 'idx' : ''),
+                    statusLabel: getSensorStatusLabel('ffmc', ffmc, isLiveTelemetry && !isTelemetryStale, undefined, isTelemetryStale),
+                    isWarn: isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' && ffmc >= 89.5,
+                    percent: isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' ? Math.min(100, Math.max(0, ffmc)) : 0,
                     minLabel: '0 idx',
                     maxLabel: '100 idx',
-                    barColor: ffmc >= 89.5 ? 'bg-[#DC2626]' : ffmc >= 82 ? 'bg-[#D97706]' : 'bg-[#4E635E]',
+                    barColor: isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' ? (ffmc >= 89.5 ? 'bg-[#DC2626]' : ffmc >= 82 ? 'bg-[#D97706]' : 'bg-[#4E635E]') : 'bg-[#94A3B8]',
                     explanation:
-                      'Fine Fuel Moisture Code (FFMC) dihitung langsung dari DHT22 (suhu & RH), hujan FC-37, dan kecepatan angin. Ambang kritis sulutan api serasah: 89.5.',
-                    reference: `ISI: ${isi.toFixed(1)} · DMC: ${dmc.toFixed(1)}`,
+                      'Fine Fuel Moisture Code (FFMC) dihitung langsung dari DHT22 (suhu & RH), intensitas hujan, dan angin. Ambang kritis sulutan api serasah: 89.5.',
+                    reference: isLiveTelemetry && !isTelemetryStale && typeof isi === 'number' && typeof dmc === 'number' ? `ISI: ${isi.toFixed(1)} · DMC: ${dmc.toFixed(1)}` : 'FWI Engine Standby',
                     extra: '100-Tree Random Forest Kernel',
                   },
                 ].map((card) => (
@@ -1593,9 +2090,44 @@ export const App: React.FC = () => {
                 ))}
               </div>
             </section>
+          </>
+        )}
 
-            {/* 3. DUAL AI ANALYSIS GRID (model_hazard.h + AI Vision / FLORA Neural Network) */}
-            <div className="scroll-mt-6 sm:scroll-mt-8 grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch" id="analysis">
+            {/* DEDICATED VIEW: MODEL 1 — FOREST FIRE HAZARD (model_hazard.h) */}
+            {currentTab === 'model_hazard' && (
+              <Model1HazardView
+                hazardResult={hazardResult}
+                temp={temp}
+                rh={rh}
+                wind={wind}
+                rain={rain}
+                ffmc={ffmc}
+                dmc={dmc}
+                dc={dc}
+                isi={isi}
+                isLiveTelemetry={isLiveTelemetry}
+                isTelemetryStale={isTelemetryStale}
+              />
+            )}
+
+            {/* DEDICATED VIEW: MODEL 2 — BOTANICAL & ENVIRONMENTAL RISK (grenvis_sensor_model.h) */}
+            {currentTab === 'model_botanical' && (
+              <Model2BotanicalView
+                floraResult={floraResult}
+                temp={temp}
+                rh={rh}
+                soilMoisture={soilMoisture}
+                history={history}
+                wateringHistory={wateringEvents}
+                isLiveTelemetry={isLiveTelemetry}
+                isTelemetryStale={isTelemetryStale}
+              />
+            )}
+
+            {/* DUAL AI ANALYSIS GRID (model_hazard.h + AI Vision / Botanical Neural Network) */}
+            {(currentTab === 'overview' || currentTab === 'all') && (
+              <>
+                <div className="scroll-mt-6 sm:scroll-mt-8 grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch" id="analysis">
               {/* Left: model_hazard.h Analysis Card */}
               <section className="flora-card p-5 sm:p-6 flex flex-col justify-between shadow-xs">
                 <div>
@@ -1616,7 +2148,9 @@ export const App: React.FC = () => {
 
                     <span
                       className={`text-xs font-bold px-3 py-1 rounded-full border flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
-                        hazardResult.riskLevel === 'HIGH'
+                        !isLiveTelemetry || isTelemetryStale || !hazardResult
+                          ? 'bg-[#EFF3EF] text-[#50645F] border-[#D6DCCE]'
+                          : hazardResult.riskLevel === 'HIGH'
                           ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
                           : hazardResult.riskLevel === 'MODERATE'
                           ? 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]'
@@ -1625,14 +2159,16 @@ export const App: React.FC = () => {
                     >
                       <span
                         className={`w-1.5 h-1.5 rounded-full ${
-                          hazardResult.riskLevel === 'HIGH'
+                          !isLiveTelemetry || isTelemetryStale || !hazardResult
+                            ? 'bg-[#A6B49E]'
+                            : hazardResult.riskLevel === 'HIGH'
                             ? 'bg-[#DC2626]'
                             : hazardResult.riskLevel === 'MODERATE'
                             ? 'bg-[#D97706]'
                             : 'bg-[#4E635E]'
                         }`}
                       />
-                      {hazardResult.riskLevel} RISK
+                      {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.riskLevel} RISK` : 'STANDBY'}
                     </span>
                   </div>
 
@@ -1642,7 +2178,7 @@ export const App: React.FC = () => {
                         Assessed Fire Hazard Level
                       </span>
                       <span className="text-lg font-bold text-[#263A35] font-display block mt-0.5">
-                        {hazardResult.riskLevel} Risk ({hazardResult.kaggleBinaryPrediction})
+                        {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.riskLevel} Risk (${hazardResult.kaggleBinaryPrediction})` : '--'}
                       </span>
                     </div>
                     <div className="text-right">
@@ -1650,7 +2186,7 @@ export const App: React.FC = () => {
                         Model Confidence
                       </span>
                       <span className="text-base font-bold font-tabular text-[#4E635E] block mt-0.5">
-                        {hazardResult.confidence.toFixed(2)}%
+                        {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.confidence.toFixed(2)}%` : '--'}
                       </span>
                     </div>
                   </div>
@@ -1666,13 +2202,13 @@ export const App: React.FC = () => {
                           <span className="w-1.5 h-1.5 rounded-full bg-[#961C1C] shrink-0" />
                         </div>
                         <span className="text-sm sm:text-base font-bold font-tabular text-[#961C1C] block mt-0.5 whitespace-nowrap">
-                          {hazardResult.highProbability.toFixed(2)}%
+                          {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.highProbability.toFixed(2)}%` : '--'}
                         </span>
                       </div>
                       <div className="w-full h-1.5 bg-[#E2E0CB] rounded-full overflow-hidden mt-2">
                         <div
                           className="h-full bg-[#961C1C] rounded-full flora-meter-bar"
-                          style={{ width: `${Math.min(100, Math.max(0, hazardResult.highProbability))}%` }}
+                          style={{ width: `${isLiveTelemetry && !isTelemetryStale && hazardResult ? Math.min(100, Math.max(0, hazardResult.highProbability)) : 0}%` }}
                         />
                       </div>
                     </div>
@@ -1685,13 +2221,13 @@ export const App: React.FC = () => {
                           <span className="w-1.5 h-1.5 rounded-full bg-[#8A570C] shrink-0" />
                         </div>
                         <span className="text-sm sm:text-base font-bold font-tabular text-[#8A570C] block mt-0.5 whitespace-nowrap">
-                          {hazardResult.moderateProbability.toFixed(2)}%
+                          {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.moderateProbability.toFixed(2)}%` : '--'}
                         </span>
                       </div>
                       <div className="w-full h-1.5 bg-[#E2E0CB] rounded-full overflow-hidden mt-2">
                         <div
                           className="h-full bg-[#8A570C] rounded-full flora-meter-bar"
-                          style={{ width: `${Math.min(100, Math.max(0, hazardResult.moderateProbability))}%` }}
+                          style={{ width: `${isLiveTelemetry && !isTelemetryStale && hazardResult ? Math.min(100, Math.max(0, hazardResult.moderateProbability)) : 0}%` }}
                         />
                       </div>
                     </div>
@@ -1704,13 +2240,13 @@ export const App: React.FC = () => {
                           <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E] shrink-0" />
                         </div>
                         <span className="text-sm sm:text-base font-bold font-tabular text-[#4E635E] block mt-0.5 whitespace-nowrap">
-                          {hazardResult.lowProbability.toFixed(2)}%
+                          {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.lowProbability.toFixed(2)}%` : '--'}
                         </span>
                       </div>
                       <div className="w-full h-1.5 bg-[#E2E0CB] rounded-full overflow-hidden mt-2">
                         <div
                           className="h-full bg-[#4E635E] rounded-full flora-meter-bar"
-                          style={{ width: `${Math.min(100, Math.max(0, hazardResult.lowProbability))}%` }}
+                          style={{ width: `${isLiveTelemetry && !isTelemetryStale && hazardResult ? Math.min(100, Math.max(0, hazardResult.lowProbability)) : 0}%` }}
                         />
                       </div>
                     </div>
@@ -1721,22 +2257,28 @@ export const App: React.FC = () => {
                       <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
                       Why This Result? (Decision Tree Split Rationale)
                     </h3>
-                    <ul className="text-xs text-[#50645F] space-y-1.5 pl-4 list-disc leading-relaxed">
-                      <li>
-                        <strong className="text-[#263A35]">FFMC = {ffmc.toFixed(1)}</strong>{' '}
-                        {ffmc > 89.95
-                          ? 'melewati ambang cabang utama pohon keputusan (> 89.95), mengindikasikan serasah sangat kering dan mudah tersulut.'
-                          : ffmc >= 84.0
-                          ? 'berada pada rentang transisi menengah (84.0 – 89.95).'
-                          : 'berada di bawah ambang penyalaan (< 84.0), menahan perambatan api.'}
-                      </li>
-                      <li>
-                        <strong className="text-[#263A35]">DMC = {dmc.toFixed(1)} &amp; Temp = {temp.toFixed(1)}°C</strong> (RH {rh.toFixed(0)}%, Wind {wind.toFixed(1)} km/h) menghasilkan Initial Spread Index <strong className="text-[#263A35]">ISI = {isi.toFixed(1)}</strong> dan Drought Code <strong className="text-[#263A35]">DC = {dc.toFixed(1)}</strong>.
-                      </li>
-                      <li>
-                        Model mikroklimat pendamping (<code className="font-mono text-[#4E635E]">grenvis_sensor_model.h</code>) mengonfirmasi risiko <strong className="text-[#263A35]">{floraResult.sensorRisk.toUpperCase()} ({floraResult.sensorConfidence.toFixed(1)}%)</strong> pada kelembapan tanah {soilMoisture.toFixed(1)}%.
-                      </li>
-                    </ul>
+                    {isLiveTelemetry && !isTelemetryStale && hazardResult && floraResult && typeof ffmc === 'number' && typeof dmc === 'number' && typeof temp === 'number' && typeof rh === 'number' && typeof wind === 'number' && typeof isi === 'number' && typeof dc === 'number' && typeof soilMoisture === 'number' ? (
+                      <ul className="text-xs text-[#50645F] space-y-1.5 pl-4 list-disc leading-relaxed">
+                        <li>
+                          <strong className="text-[#263A35]">FFMC = {ffmc.toFixed(1)}</strong>{' '}
+                          {ffmc > 89.95
+                            ? 'melewati ambang cabang utama pohon keputusan (> 89.95), mengindikasikan serasah sangat kering dan mudah tersulut.'
+                            : ffmc >= 84.0
+                            ? 'berada pada rentang transisi menengah (84.0 – 89.95).'
+                            : 'berada di bawah ambang penyalaan (< 84.0), menahan perambatan api.'}
+                        </li>
+                        <li>
+                          <strong className="text-[#263A35]">DMC = {dmc.toFixed(1)} &amp; Temp = {temp.toFixed(1)}°C</strong> (RH {rh.toFixed(0)}%, Wind {wind.toFixed(1)} km/h) menghasilkan Initial Spread Index <strong className="text-[#263A35]">ISI = {isi.toFixed(1)}</strong> dan Drought Code <strong className="text-[#263A35]">DC = {dc.toFixed(1)}</strong>.
+                        </li>
+                        <li>
+                          Model mikroklimat pendamping (<code className="font-mono text-[#4E635E]">grenvis_sensor_model.h</code>) mengonfirmasi risiko <strong className="text-[#263A35]">{floraResult.sensorRisk.toUpperCase()} ({floraResult.sensorConfidence.toFixed(1)}%)</strong> pada kelembapan tanah {soilMoisture.toFixed(1)}%.
+                        </li>
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-[#50645F] italic m-0">
+                        Inference standby — Menunggu telemetri lengkap (suhu, kelembapan, angin, hujan, serasah) dari gateway untuk mengevaluasi pohon keputusan secara live.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1763,7 +2305,7 @@ export const App: React.FC = () => {
                     </div>
                     <span className="text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
                       <span className="w-1.5 h-1.5 rounded-full bg-[#4E635E]" />
-                      Topologi Preset
+                      ESP32-CAM Vision
                     </span>
                   </div>
 
@@ -1773,51 +2315,68 @@ export const App: React.FC = () => {
                         Dominant Optical Classification
                       </span>
                       <span className="text-lg font-bold text-[#263A35] font-display block mt-0.5">
-                        {visionPrediction}
+                        {wildfireResult ? visionPrediction : edgePrediction ? `${edgePrediction} (Edge AI)` : 'Standby / Belum Dianalisis'}
                       </span>
                     </div>
                     <div className="text-right">
                       <span className="text-[10px] font-semibold text-[#50645F] uppercase tracking-wider block">
-                        Optical Stream
+                        Sumber Citra
                       </span>
-                      <span className="text-base font-bold font-tabular text-[#4E635E] block mt-0.5">
-                        SVGA · 800×600
+                      <span className="text-xs font-bold font-tabular text-[#4E635E] block mt-0.5">
+                        {captureSource === 'camera'
+                          ? 'Webcam Lokal'
+                          : captureSource === 'upload'
+                          ? 'Unggahan Manual'
+                          : captureSource === 'gateway'
+                          ? 'Gateway ESP32-CAM'
+                          : 'Standby'}
                       </span>
                     </div>
                   </div>
 
-                  <div className="space-y-3.5 my-3">
-                    {[
-                      {
-                        label: 'Healthy Forest Canopy (Normal)',
-                        value: visionProbs.healthy,
-                        color: '#4E635E',
-                      },
-                      {
-                        label: 'Smoke Plume / Haze Indication',
-                        value: visionProbs.smoke,
-                        color: '#EA580C',
-                      },
-                      {
-                        label: 'Active Surface Fire / Thermal Glow',
-                        value: visionProbs.fire,
-                        color: '#B43E1F',
-                      },
-                    ].map((bar) => (
-                      <div key={bar.label}>
-                        <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1.5">
-                          <span>{bar.label}</span>
-                          <span className="font-tabular text-[#50645F]">{bar.value.toFixed(1)}%</span>
+                  {wildfireResult ? (
+                    <div className="space-y-3.5 my-3">
+                      {[
+                        {
+                          label: 'Healthy Forest Canopy (Normal)',
+                          value: visionProbs.healthy,
+                          color: '#4E635E',
+                        },
+                        {
+                          label: 'Smoke Plume / Haze Indication',
+                          value: visionProbs.smoke,
+                          color: '#EA580C',
+                        },
+                        {
+                          label: 'Active Surface Fire / Thermal Glow',
+                          value: visionProbs.fire,
+                          color: '#B43E1F',
+                        },
+                      ].map((bar) => (
+                        <div key={bar.label}>
+                          <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1.5">
+                            <span>{bar.label}</span>
+                            <span className="font-tabular text-[#50645F]">{bar.value.toFixed(1)}%</span>
+                          </div>
+                          <div className="h-2.5 rounded-full bg-[#E2E0CB] overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{ width: `${bar.value}%`, backgroundColor: bar.color }}
+                            />
+                          </div>
                         </div>
-                        <div className="h-2.5 rounded-full bg-[#E2E0CB] overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${bar.value}%`, backgroundColor: bar.color }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-4 px-3 my-3 text-center text-xs text-[#50645F] bg-[#EFF3EF] rounded-lg border border-[#D6DCCE]">
+                      <p className="font-semibold text-[#263A35] mb-0.5">Belum Ada Inferensi Citra Visual</p>
+                      <p className="text-[11px] m-0">
+                        {edgePrediction
+                          ? `Hasil Edge AI firmware: ${edgePrediction}${edgeConfidence !== null ? ` (Confidence: ${(edgeConfidence * 100).toFixed(0)}%)` : ''}. Jalankan Analisis Karhutla untuk inferensi cloud.`
+                          : 'Distribusi probabilitas visual hanya ditampilkan dari model inferensi citra terverifikasi.'}
+                      </p>
+                    </div>
+                  )}
 
                   <div className="mt-4 pt-3.5 border-t border-[#D6DCCE] space-y-2.5">
                     <div>
@@ -1825,11 +2384,15 @@ export const App: React.FC = () => {
                         Optical Fusion Interpretation
                       </span>
                       <p className="text-xs text-[#263A35] font-medium mt-0.5 leading-relaxed">
-                        {visionPrediction === 'Active Surface Fire'
-                          ? 'Kamera mendeteksi anomali termal/nyala api permukaan yang berkorelasi dengan indeks FFMC > 92 dan prediksi High Risk pada model_hazard.h.'
-                          : visionPrediction === 'Smoke Plume Detected'
-                          ? 'Terdeteksi kepulan asap putih/abu-abu di atas tajuk pohon. Selaras dengan vektor uji Kaggle x_new (On Fire).'
-                          : 'Kanopi hutan tampak hijau sehat tanpa anomali asap maupun titik api permukaan.'}
+                        {wildfireResult
+                          ? visionPrediction === 'Active Surface Fire'
+                            ? 'Kamera mendeteksi anomali termal/nyala api permukaan yang berkorelasi dengan indeks FFMC > 92 dan prediksi High Risk pada model_hazard.h.'
+                            : visionPrediction === 'Smoke Plume Detected'
+                            ? 'Terdeteksi kepulan asap putih/abu-abu di atas tajuk pohon. Selaras dengan vektor uji Kaggle x_new (On Fire).'
+                            : 'Kanopi hutan tampak hijau sehat tanpa anomali asap maupun titik api permukaan.'
+                          : edgePrediction
+                          ? `Deteksi Edge AI kamera: ${edgePrediction}. Menunggu inferensi cloud untuk konfirmasi skor probabilitas penuh.`
+                          : 'Sistem standby menunggu frame kamera ESP32-CAM atau unggahan foto kanopi untuk inferensi citra visual.'}
                       </p>
                     </div>
                     <div>
@@ -1837,9 +2400,11 @@ export const App: React.FC = () => {
                         Recommended Action
                       </span>
                       <p className="text-xs text-[#263A35] font-medium mt-0.5 leading-relaxed">
-                        {visionPrediction === 'Healthy Forest Canopy'
-                          ? 'Pertahankan patroli rel otomatis berkala dan pantau kelembapan serasah.'
-                          : 'Arahkan carriage kamera L298N ke titik koordinat sektor dan aktifkan penyiraman/pendinginan zona penyangga.'}
+                        {wildfireResult
+                          ? visionPrediction === 'Healthy Forest Canopy'
+                            ? 'Pertahankan patroli berkala dan pantau kelembapan serasah.'
+                            : 'Aktifkan penyiraman/pendinginan zona penyangga serasah kanopi.'
+                          : 'Muat frame kamera dari gateway untuk memulai analisis visi komputer.'}
                       </p>
                     </div>
                   </div>
@@ -1853,25 +2418,13 @@ export const App: React.FC = () => {
               </section>
             </div>
 
-            {/* 4. INTERACTIVE SIMULATOR & KAGGLE BENCHMARKS SECTION */}
-            <FloraKaggleSection
-              temp={temp}
-              rh={rh}
-              wind={wind}
-              rain={rain}
-              ffmc={ffmc}
-              dmc={dmc}
-              dc={dc}
-              isi={isi}
-              soilMoisture={soilMoisture}
-              activePresetId={activePresetId}
-              hazardResult={hazardResult}
-              floraResult={floraResult}
-              onChangeParam={handleChangeParam}
-              onSelectPreset={handleSelectPreset}
-            />
+            {/* 4. KAGGLE DATASET INFORMATION & BENCHMARKS SECTION */}
+            <FloraKaggleSection />
+          </>
+        )}
 
             {/* 5. CAMERA STREAM CAPTURE SECTION (#cameraCapture) */}
+            {(currentTab === 'overview' || currentTab === 'all' || currentTab === 'model_vision') && (
             <section id="cameraCapture" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
               {/* Header Bar with Title and Domain Selector */}
               <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
@@ -1995,6 +2548,17 @@ export const App: React.FC = () => {
                           onChange={handleFileChange}
                         />
                       </label>
+
+                      <button
+                        type="button"
+                        onClick={() => handleFetchGatewayFrame(true)}
+                        disabled={isFetchingGatewayFrame}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white hover:bg-[#EFF3EF] text-[#263A35] border border-[#D6DCCE] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                        title="Ambil frame JPEG terbaru dari cache gateway (/api/vision/latest-frame.jpg)"
+                      >
+                        <Camera size={13} />
+                        <span>{isFetchingGatewayFrame ? 'Memuat Gateway...' : 'Ambil Frame Gateway (ESP32-CAM)'}</span>
+                      </button>
                     </>
                   )}
 
@@ -2099,17 +2663,17 @@ export const App: React.FC = () => {
                       {/* Captured Frame HUD */}
                       <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-mono border border-[#364844] flex items-center gap-1.5 shadow-xs">
                         <CheckCircle2 size={12} className="text-[#5DD62C]" />
-                        <span>{captureSource === 'camera' ? 'FRAME FOTO KAMERA' : 'UNGGAHAN GAMBAR'}</span>
+                        <span>
+                          {captureSource === 'camera'
+                            ? 'FRAME FOTO KAMERA'
+                            : captureSource === 'gateway'
+                            ? `FRAME GATEWAY ESP32-CAM${gatewayFrameMeta ? ` · ${(gatewayFrameMeta.byteLength / 1024).toFixed(1)} KB${gatewayFrameMeta.isStale ? ' (STALE)' : ''}` : ''}`
+                            : 'UNGGAHAN GAMBAR'}
+                        </span>
                       </div>
                     </>
                   ) : (
                     <>
-                      {/* Fallback Simulation Frame */}
-                      <img
-                        src={canopyFrameSvg}
-                        alt="Simulated forest canopy preview"
-                        className="w-full h-full object-cover absolute inset-0 opacity-25"
-                      />
                       <div className="relative z-10 p-6 max-w-sm flex flex-col items-center gap-3">
                         <div className="w-12 h-12 rounded-2xl bg-[#23312E]/90 border border-[#364844] flex items-center justify-center text-[#5DD62C] shadow-md">
                           <Camera size={24} />
@@ -2121,10 +2685,10 @@ export const App: React.FC = () => {
                               : 'Kamera Diagnosa Patologi Daun'}
                           </h3>
                           <p className="text-xs text-[#A6B49E] mt-1 leading-relaxed">
-                            Buka kamera laptop/smartphone Anda atau unggah file foto untuk verifikasi visual langsung ke model AI.
+                            Buka kamera laptop/smartphone, muat frame dari gateway ESP32-CAM, atau unggah file foto untuk verifikasi visual langsung ke model AI.
                           </p>
                         </div>
-                        <div className="flex gap-2 mt-1">
+                        <div className="flex gap-2 mt-1 flex-wrap justify-center">
                           <button
                             type="button"
                             onClick={handleStartCamera}
@@ -2132,6 +2696,15 @@ export const App: React.FC = () => {
                           >
                             <Video size={13} />
                             <span>Buka Kamera</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleFetchGatewayFrame(true)}
+                            disabled={isFetchingGatewayFrame}
+                            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white hover:bg-[#EFF3EF] text-[#263A35] border border-[#D6DCCE] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                          >
+                            <Camera size={13} />
+                            <span>Frame Gateway</span>
                           </button>
                           <label className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#23312E] hover:bg-[#2C3B37] text-[#E2E0CB] border border-[#364844] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
                             <Upload size={13} />
@@ -2152,26 +2725,32 @@ export const App: React.FC = () => {
                   <div className="absolute inset-x-3 bottom-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 z-10 pointer-events-none">
                     <div className="px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-medium backdrop-blur-sm border border-[#364844] shadow-xs max-w-full truncate">
                       {visionDomain === 'wildfire'
-                        ? `Mode: Karhutla · Rel: ${railPositionMm} mm · Source: ${captureSource === 'camera' ? 'Webcam' : captureSource === 'upload' ? 'Upload' : 'Simulasi'}`
+                        ? `Mode: Karhutla · Rel: ${railPositionMm} mm · Source: ${captureSource === 'camera' ? 'Webcam' : captureSource === 'upload' ? 'Upload' : captureSource === 'gateway' ? 'Gateway ESP32-CAM' : 'Standby'}`
                         : `Mode: Diagnosa Daun · Status Layanan: ${isLeafDiseaseApiConfigured() ? 'Tersambung' : 'Belum Dideploy'}`}
                     </div>
 
                     <div className="flex flex-wrap items-center justify-start sm:justify-end gap-1.5">
                       {visionDomain === 'wildfire' ? (
-                        <>
-                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
-                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
-                            Healthy: {visionProbs.healthy.toFixed(1)}%
+                        wildfireResult ? (
+                          <>
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
+                              Healthy: {visionProbs.healthy.toFixed(1)}%
+                            </span>
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#FB923C]" />
+                              Smoke: {visionProbs.smoke.toFixed(1)}%
+                            </span>
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#F87171]" />
+                              Fire: {visionProbs.fire.toFixed(1)}%
+                            </span>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#A6B49E] text-[10px] font-mono border border-[#364844] shadow-xs">
+                            {edgePrediction ? `Edge AI: ${edgePrediction}${edgeConfidence !== null ? ` (${(edgeConfidence * 100).toFixed(0)}%)` : ''} · Cloud: Standby` : 'Inferensi Cloud Siap'}
                           </span>
-                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
-                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#FB923C]" />
-                            Smoke: {visionProbs.smoke.toFixed(1)}%
-                          </span>
-                          <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
-                            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#F87171]" />
-                            Fire: {visionProbs.fire.toFixed(1)}%
-                          </span>
-                        </>
+                        )
                       ) : (
                         <>
                           <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
@@ -2213,13 +2792,15 @@ export const App: React.FC = () => {
                         )}
                       </div>
                       <span className="text-sm font-bold text-[#263A35] font-tabular block mt-1">
-                        {new Date(lastCaptureTime).toLocaleTimeString('id-ID', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit',
-                        })}{' '}
+                        {lastCaptureTime
+                          ? new Date(lastCaptureTime).toLocaleTimeString('id-ID', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })
+                          : '--:--:--'}{' '}
                         <span className="text-xs font-normal text-[#50645F]">
-                          ({captureSource === 'camera' ? 'Kamera' : captureSource === 'upload' ? 'Upload' : 'Preset'})
+                          ({captureSource === 'camera' ? 'Kamera' : captureSource === 'upload' ? 'Upload' : captureSource === 'gateway' ? 'Gateway ESP32-CAM' : 'Standby'})
                         </span>
                       </span>
                       <span className="text-[10px] text-[#50645F] block mt-1 font-mono">
@@ -2247,7 +2828,9 @@ export const App: React.FC = () => {
                         </span>
                         <span className="text-sm font-bold text-[#4E635E] font-tabular block mt-0.5">
                           {visionDomain === 'wildfire'
-                            ? `${Math.max(visionProbs.healthy, visionProbs.smoke, visionProbs.fire).toFixed(1)}%`
+                            ? wildfireResult
+                              ? `${wildfireResult.confidence_percentage.toFixed(1)}%`
+                              : '-'
                             : leafPrediction
                             ? `${Math.max(leafProbs.healthy, leafProbs.powdery, leafProbs.rust).toFixed(1)}%`
                             : '-'}
@@ -2273,55 +2856,62 @@ export const App: React.FC = () => {
                       </div>
 
                       {visionDomain === 'wildfire' ? (
-                        <>
-                          {/* Wildfire Bar 1: Non-Fire */}
-                          <div>
-                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
-                              <span>Healthy Canopy (Non-Fire)</span>
-                              <span className="font-tabular text-[#4E635E] font-bold">
-                                {visionProbs.healthy.toFixed(1)}%
-                              </span>
+                        wildfireResult ? (
+                          <>
+                            {/* Wildfire Bar 1: Non-Fire */}
+                            <div>
+                              <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                                <span>Healthy Canopy (Non-Fire)</span>
+                                <span className="font-tabular text-[#4E635E] font-bold">
+                                  {visionProbs.healthy.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-[#4E635E] flora-meter-bar transition-all duration-500"
+                                  style={{ width: `${Math.min(100, Math.max(0, visionProbs.healthy))}%` }}
+                                />
+                              </div>
                             </div>
-                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-[#4E635E] flora-meter-bar transition-all duration-500"
-                                style={{ width: `${Math.min(100, Math.max(0, visionProbs.healthy))}%` }}
-                              />
-                            </div>
-                          </div>
 
-                          {/* Wildfire Bar 2: Smoke */}
-                          <div>
-                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
-                              <span>Smoke Plume (Smoke)</span>
-                              <span className="font-tabular text-[#9A3412] font-bold">
-                                {visionProbs.smoke.toFixed(1)}%
-                              </span>
+                            {/* Wildfire Bar 2: Smoke */}
+                            <div>
+                              <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                                <span>Smoke Plume (Smoke)</span>
+                                <span className="font-tabular text-[#9A3412] font-bold">
+                                  {visionProbs.smoke.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-[#EA580C] flora-meter-bar transition-all duration-500"
+                                  style={{ width: `${Math.min(100, Math.max(0, visionProbs.smoke))}%` }}
+                                />
+                              </div>
                             </div>
-                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-[#EA580C] flora-meter-bar transition-all duration-500"
-                                style={{ width: `${Math.min(100, Math.max(0, visionProbs.smoke))}%` }}
-                              />
-                            </div>
-                          </div>
 
-                          {/* Wildfire Bar 3: Fire */}
-                          <div>
-                            <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
-                              <span>Surface Fire (Fire)</span>
-                              <span className="font-tabular text-[#7C2D12] font-bold">
-                                {visionProbs.fire.toFixed(1)}%
-                              </span>
+                            {/* Wildfire Bar 3: Fire */}
+                            <div>
+                              <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
+                                <span>Surface Fire (Fire)</span>
+                                <span className="font-tabular text-[#7C2D12] font-bold">
+                                  {visionProbs.fire.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-[#B43E1F] flora-meter-bar transition-all duration-500"
+                                  style={{ width: `${Math.min(100, Math.max(0, visionProbs.fire))}%` }}
+                                />
+                              </div>
                             </div>
-                            <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-[#B43E1F] flora-meter-bar transition-all duration-500"
-                                style={{ width: `${Math.min(100, Math.max(0, visionProbs.fire))}%` }}
-                              />
-                            </div>
+                          </>
+                        ) : (
+                          <div className="py-4 px-3 text-center text-xs text-[#50645F] bg-[#EFF3EF] rounded-lg border border-[#D6DCCE]">
+                            <p className="font-semibold text-[#263A35] mb-0.5">Belum Ada Hasil Inferensi Citra</p>
+                            <p className="text-[11px] m-0">Muat frame dari gateway atau unggah foto lalu klik &quot;Analisis Karhutla&quot; untuk menghasilkan skor probabilitas model.</p>
                           </div>
-                        </>
+                        )
                       ) : (
                         <>
                           {/* Leaf Disease Bar 1: Healthy */}
@@ -2388,9 +2978,12 @@ export const App: React.FC = () => {
                 </div>
               </div>
             </section>
+            )}
 
             {/* 6. SCANNER CARRIAGE MANUAL CONTROL (#device-control) */}
-            <section id="device-control" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
+            {(currentTab === 'overview' || currentTab === 'all') && (
+              <>
+                <section id="device-control" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
               <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
                 <div>
                   <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
@@ -2401,7 +2994,7 @@ export const App: React.FC = () => {
                   </h2>
                 </div>
                 <span className="text-xs font-semibold px-3 py-1 rounded-full border bg-[#EFF3EF] text-[#4E635E] border-[#A6B49E] flex items-center gap-1.5 shrink-0 whitespace-nowrap">
-                  <span className={`w-2 h-2 rounded-full ${isLiveMqtt ? 'bg-[#16A34A] animate-pulse' : 'bg-[#4E635E]'}`} />
+                  <span className={`w-2 h-2 rounded-full ${isLiveTelemetry && !isTelemetryStale ? 'bg-[#16A34A] animate-pulse' : 'bg-[#4E635E]'}`} />
                   {movementStatus === 'idle'
                     ? `${motorDriverInfo} STANDBY`
                     : `${motorDriverInfo} · ${movementStatus.replace(/_/g, ' ').toUpperCase()}`}
@@ -2415,7 +3008,7 @@ export const App: React.FC = () => {
                     SW1 Left: {limitLeft ? 'ACTIVE (0mm)' : 'CLEAR'}
                   </span>
                   <span className="text-[#4E635E]">
-                    Carriage Position: {railPositionMm} mm ({((railPositionMm / 1200) * 100).toFixed(0)}%)
+                    Carriage Position: {railPositionMm !== null ? `${railPositionMm} mm (${((railPositionMm / 1200) * 100).toFixed(0)}%)` : 'Indeterminate (Standby)'}
                   </span>
                   <span className={limitRight ? 'text-[#DC2626]' : 'text-[#4E635E]'}>
                     SW2 Right: {limitRight ? 'ACTIVE (1200mm)' : 'CLEAR'}
@@ -2424,26 +3017,33 @@ export const App: React.FC = () => {
                 <div className="h-3 rounded-full bg-[#E2E0CB] relative overflow-hidden">
                   <div
                     className="h-full bg-[#4E635E] rounded-full transition-all duration-300"
-                    style={{ width: `${(railPositionMm / 1200) * 100}%` }}
+                    style={{ width: `${railPositionMm !== null ? (railPositionMm / 1200) * 100 : 0}%` }}
                   />
+                </div>
+              </div>
+
+              {/* Fail-Closed Actuator Safety Gate Banner */}
+              <div className="bg-[#FEF7E8] border border-[#FDE3B5] rounded-xl p-3 mb-4 flex items-start gap-2.5 text-xs text-[#8A570C]">
+                <span className="text-base leading-none shrink-0" aria-hidden="true">🔒</span>
+                <div>
+                  <span className="font-bold block">Fail-Closed Safety Gate Aktif</span>
+                  <p className="m-0 text-[11px] leading-relaxed">
+                    Kontrol rel motor L298N (L/R/S) dan trigger rana kamera (C) dinonaktifkan dalam mode Read-Only via Backend Gateway demi keamanan aktuator fisik.
+                  </p>
                 </div>
               </div>
 
               <div
                 className="grid grid-cols-2 sm:grid-cols-4 gap-3"
                 role="group"
-                aria-label="Kontrol Scanner Motor Rel L298N"
+                aria-label="Kontrol Scanner Motor Rel L298N (Dinonaktifkan - Fail Closed)"
               >
                 <button
                   onClick={() => handleRailCommand('L')}
-                  disabled={limitLeft}
-                  aria-disabled={limitLeft}
-                  aria-label="Gerakkan kamera rel ke kiri (L)"
-                  className={`min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
-                    movementStatus === 'left_command_sent'
-                      ? 'bg-[#4E635E] text-white border-[#4E635E] ring-2 ring-[#A6B49E]'
-                      : 'bg-white hover:bg-[#F5F4EE] text-[#263A35] border-[#D6DCCE]'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  disabled={true}
+                  aria-disabled="true"
+                  aria-label="Gerakkan kamera rel ke kiri (L) - dinonaktifkan (Fail-Closed Gate)"
+                  className="min-h-11 py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border shadow-xs bg-[#F5F4EE] text-[#50645F] border-[#D6DCCE] opacity-60 cursor-not-allowed"
                 >
                   <span aria-hidden="true">◀</span>
                   <span>Move Left (L)</span>
@@ -2451,12 +3051,10 @@ export const App: React.FC = () => {
 
                 <button
                   onClick={() => handleRailCommand('S')}
-                  aria-label="Hentikan darurat motor rel (S)"
-                  className={`min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#D97706] ${
-                    movementStatus === 'stop_command_sent'
-                      ? 'bg-[#D97706] text-white border-[#D97706]'
-                      : 'bg-[#FEF7E8] hover:bg-[#FDE3B5] text-[#8A570C] border-[#FDE3B5]'
-                  }`}
+                  disabled={true}
+                  aria-disabled="true"
+                  aria-label="Hentikan darurat motor rel (S) - dinonaktifkan (Fail-Closed Gate)"
+                  className="min-h-11 py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border shadow-xs bg-[#F5F4EE] text-[#50645F] border-[#D6DCCE] opacity-60 cursor-not-allowed"
                 >
                   <span aria-hidden="true">■</span>
                   <span>Stop Motor (S)</span>
@@ -2464,14 +3062,10 @@ export const App: React.FC = () => {
 
                 <button
                   onClick={() => handleRailCommand('R')}
-                  disabled={limitRight}
-                  aria-disabled={limitRight}
-                  aria-label="Gerakkan kamera rel ke kanan (R)"
-                  className={`min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] ${
-                    movementStatus === 'right_command_sent'
-                      ? 'bg-[#4E635E] text-white border-[#4E635E] ring-2 ring-[#A6B49E]'
-                      : 'bg-white hover:bg-[#F5F4EE] text-[#263A35] border-[#D6DCCE]'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  disabled={true}
+                  aria-disabled="true"
+                  aria-label="Gerakkan kamera rel ke kanan (R) - dinonaktifkan (Fail-Closed Gate)"
+                  className="min-h-11 py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border shadow-xs bg-[#F5F4EE] text-[#50645F] border-[#D6DCCE] opacity-60 cursor-not-allowed"
                 >
                   <span>Move Right (R)</span>
                   <span aria-hidden="true">▶</span>
@@ -2479,8 +3073,10 @@ export const App: React.FC = () => {
 
                 <button
                   onClick={() => handleRailCommand('C')}
-                  aria-label="Trigger tangkapan foto kamera pada posisi rel (C)"
-                  className="min-h-11 py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs bg-[#EFF3EF] hover:bg-[#E2E0CB] text-[#263A35] border-[#A6B49E] cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+                  disabled={true}
+                  aria-disabled="true"
+                  aria-label="Trigger tangkapan foto kamera pada posisi rel (C) - dinonaktifkan (Fail-Closed Gate)"
+                  className="min-h-11 py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border shadow-xs bg-[#F5F4EE] text-[#50645F] border-[#D6DCCE] opacity-60 cursor-not-allowed"
                 >
                   <span aria-hidden="true">◉</span>
                   <span>Capture Photo (C)</span>
@@ -2537,14 +3133,16 @@ export const App: React.FC = () => {
                     </div>
                     <span
                       className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
-                        hazardResult.riskLevel === 'HIGH'
+                        !isLiveTelemetry || isTelemetryStale || !hazardResult
+                          ? 'bg-[#EFF3EF] text-[#50645F] border-[#D6DCCE]'
+                          : hazardResult.riskLevel === 'HIGH'
                           ? 'bg-[#FEEAEA] text-[#961C1C] border-[#FCCECE]'
                           : hazardResult.riskLevel === 'MODERATE'
                           ? 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]'
                           : 'bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]'
                       }`}
                     >
-                      {hazardResult.riskLevel} Priority
+                      {isLiveTelemetry && !isTelemetryStale && hazardResult ? `${hazardResult.riskLevel} Priority` : 'STANDBY'}
                     </span>
                   </div>
 
@@ -2553,11 +3151,13 @@ export const App: React.FC = () => {
                       Current Assessment
                     </span>
                     <p className="text-xs text-[#263A35] leading-relaxed font-medium m-0">
-                      {hazardResult.riskLevel === 'HIGH'
-                        ? `Indeks FFMC (${ffmc.toFixed(1)}) dan DMC (${dmc.toFixed(1)}) mengindikasikan bahaya kebakaran tinggi (${hazardResult.confidence.toFixed(1)}%). Lakukan pendinginan serasah dan verifikasi kamera.`
-                        : hazardResult.riskLevel === 'MODERATE'
-                        ? `Kondisi serasah mulai mengering (FFMC ${ffmc.toFixed(1)}). Siagakan pompa penyiraman zona penyangga.`
-                        : 'Kondisi kanopi hutan dan kelembapan tanah dalam rentang optimal. Pertahankan jadwal patroli rutin.'}
+                      {isLiveTelemetry && !isTelemetryStale && hazardResult && typeof ffmc === 'number' && typeof dmc === 'number'
+                        ? hazardResult.riskLevel === 'HIGH'
+                          ? `Indeks FFMC (${ffmc.toFixed(1)}) dan DMC (${dmc.toFixed(1)}) mengindikasikan bahaya kebakaran tinggi (${hazardResult.confidence.toFixed(1)}%). Lakukan pendinginan serasah dan verifikasi kamera.`
+                          : hazardResult.riskLevel === 'MODERATE'
+                          ? `Kondisi serasah mulai mengering (FFMC ${ffmc.toFixed(1)}). Siagakan pompa penyiraman zona penyangga.`
+                          : 'Kondisi kanopi hutan dan kelembapan tanah dalam rentang optimal. Pertahankan jadwal patroli rutin.'
+                        : 'Menunggu pembacaan telemetri aktif gateway untuk menentukan prioritas mitigasi.'}
                     </p>
                   </div>
 
@@ -2566,19 +3166,24 @@ export const App: React.FC = () => {
                       Recommended Action Checklist:
                     </span>
                     <ul className="text-xs text-[#263A35] space-y-2 pl-4 list-disc font-medium">
-                      {ffmc >= 89.5 && (
+                      {isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' && ffmc >= 89.5 && (
                         <li className="leading-relaxed">
                           <strong>FFMC Kritis ({ffmc.toFixed(1)} ≥ 89.5):</strong> Aktifkan penyiraman kabut (misting) pada zona penyangga untuk menurunkan keterbakaran serasah permukaan.
                         </li>
                       )}
-                      {soilMoisture < 35 && (
+                      {isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' && soilMoisture < 35 && (
                         <li className="leading-relaxed">
                           <strong>Defisit Kelembapan Tanah ({soilMoisture.toFixed(1)}%):</strong> Lakukan irigasi bertahap untuk menjaga hidrasi perakaran dan menurunkan DMC.
                         </li>
                       )}
-                      {wind >= 5.5 && (
+                      {isLiveTelemetry && !isTelemetryStale && typeof wind === 'number' && wind >= 5.5 && (
                         <li className="leading-relaxed">
-                          <strong>Kecepatan Angin Tinggi ({wind.toFixed(1)} km/h):</strong> Pantau arah angin karena nilai ISI ({isi.toFixed(1)}) dapat mempercepat laju rambat api.
+                          <strong>Kecepatan Angin Tinggi ({wind.toFixed(1)} km/h):</strong> Pantau arah angin karena nilai ISI ({typeof isi === 'number' ? isi.toFixed(1) : '--'}) dapat mempercepat laju rambat api.
+                        </li>
+                      )}
+                      {(!isLiveTelemetry || isTelemetryStale) && (
+                        <li className="leading-relaxed text-[#50645F]">
+                          Menunggu stream telemetri aktif gateway untuk mengevaluasi checklist mitigasi secara live.
                         </li>
                       )}
                       <li className="leading-relaxed">
@@ -2604,21 +3209,23 @@ export const App: React.FC = () => {
                         Irrigation &amp; Litter Wetting
                       </span>
                       <span className="text-[11px] font-tabular text-[#50645F]">
-                        Soil moisture: <strong className="text-[#263A35]">{soilMoisture.toFixed(0)}%</strong> · FFMC:{' '}
-                        <strong className="text-[#263A35]">{ffmc.toFixed(1)}</strong>
+                        Soil moisture: <strong className="text-[#263A35]">{isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' ? `${soilMoisture.toFixed(1)}%` : 'Unavailable'}</strong> · FFMC:{' '}
+                        <strong className="text-[#263A35]">{isLiveTelemetry && !isTelemetryStale && typeof ffmc === 'number' ? ffmc.toFixed(1) : 'Unavailable'}</strong>
                       </span>
                     </div>
                     <h2 className="text-lg sm:text-xl font-bold text-[#263A35] font-display">
-                      {soilMoisture < 30 || ffmc >= 90
-                        ? 'Attention Needed: Wetting Recommended'
-                        : 'Soil & Fuel Moisture Sufficient'}
+                      {isLiveTelemetry && !isTelemetryStale && typeof soilMoisture === 'number' && typeof ffmc === 'number'
+                        ? (soilMoisture < 30 || ffmc >= 90
+                          ? 'Attention Needed: Wetting Recommended'
+                          : 'Soil & Fuel Moisture Sufficient')
+                        : 'Mitigation Status: Standby Menunggu Telemetri'}
                     </h2>
                     <p className="text-xs text-[#50645F] mt-1 leading-relaxed m-0">
-                      Catat tindakan penyiraman atau pendinginan serasah untuk memperbarui riwayat hidrasi dan menurunkan indeks FFMC secara simulasi.
+                      Catat tindakan penyiraman atau pendinginan serasah untuk memperbarui riwayat hidrasi dan log operasional mitigasi lapangan.
                     </p>
                   </div>
 
-                  {wateringEvents[0] && (
+                  {wateringEvents[0] ? (
                     <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 my-3.5">
                       <div className="flex items-center justify-between text-xs mb-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-[#50645F]">
@@ -2636,10 +3243,14 @@ export const App: React.FC = () => {
                         })}
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-[#50645F] mt-1 font-tabular">
-                        <span>Soil Before: {wateringEvents[0].soilBefore.toFixed(1)}%</span>
+                        <span>Soil Before: {typeof wateringEvents[0].soilBefore === 'number' ? `${wateringEvents[0].soilBefore.toFixed(1)}%` : '--'}</span>
                         <span className="text-[#50645F]/40">·</span>
                         <span className="truncate">{wateringEvents[0].note}</span>
                       </div>
+                    </div>
+                  ) : (
+                    <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 my-3.5 text-center text-xs text-[#50645F]">
+                      Belum ada tindakan penyiraman tercatat pada sesi ini.
                     </div>
                   )}
 
@@ -2661,8 +3272,8 @@ export const App: React.FC = () => {
             {/* 8. HISTORICAL TRENDS CANVAS & 24H SUMMARY */}
             <FloraHistoryCanvas history={history} />
 
-            {/* 9. SYSTEM & HARDWARE HEALTH TOPOLOGY (#devices) */}
-            <section id="devices" className="scroll-mt-6 sm:scroll-mt-8">
+                {/* 9. SYSTEM & HARDWARE HEALTH TOPOLOGY (#devices) */}
+                <section id="devices" className="scroll-mt-6 sm:scroll-mt-8">
               <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
                 <div>
                   <span className="text-[10px] font-bold text-[#4E635E] uppercase tracking-widest block">
@@ -2673,26 +3284,46 @@ export const App: React.FC = () => {
                   </h2>
                 </div>
                 <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-[#EFF3EF] text-[#263A35] border-[#A6B49E]">
-                  Telemetry Stream (Preset Nodes)
+                  Hardware &amp; Subsystem Topology
                 </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 lg:gap-4">
                 {[
-                  { label: 'ESP32 Main Node', status: isLiveMqtt ? 'ONLINE LIVE' : 'PRESET READY', detail: `MAC: 8C:AA:B5:37:71:18 · Node: ${activeNodeId || 'ESP32-MAIN'} · ${isLiveMqtt ? 'Realtime Telemetry Active' : 'Siap Terhubung via EMQX'}` },
-                  { label: 'ESP32-CAM Node', status: isLiveMqtt ? 'ONLINE' : 'PRESET READY', detail: 'MAC: F8:B3:B7:A6:F3:9C · Railway API Active' },
+                  {
+                    label: 'ESP32 Main Node',
+                    status: isLiveTelemetry && !isTelemetryStale ? 'ONLINE LIVE' : 'OFFLINE',
+                    detail: `MAC: 8C:AA:B5:37:71:18 · Node: ${activeNodeId || 'ESP32-MAIN'} · ${isLiveTelemetry && !isTelemetryStale ? 'Live Gateway SSE (/api/telemetry/stream)' : 'Device Offline / Standby'}`,
+                  },
+                  {
+                    label: 'ESP32-CAM Node',
+                    status: gatewayFrameStatus === 'ready' && !gatewayFrameMeta?.isStale ? 'FRAME READY' : 'OFFLINE',
+                    detail: `MAC: F8:B3:B7:A6:F3:9C · ${gatewayFrameStatus === 'ready' && gatewayFrameMeta && !gatewayFrameMeta.isStale ? `${(gatewayFrameMeta.byteLength / 1024).toFixed(1)} KB (HTTP 200)` : 'Backend Cache (/api/vision/latest-frame.jpg) · Offline'}`,
+                  },
                   { label: 'C Edge Kernel 1', status: 'ACTIVE', detail: 'model_hazard.h (100 Trees RF in-memory)' },
                   { label: 'C Edge Kernel 2', status: 'ACTIVE', detail: 'grenvis_sensor_model.h (TFLite in-memory)' },
                   {
-                    label: 'MQTT Broker',
-                    status: isLiveMqtt ? 'CONNECTED LIVE' : 'CONFIGURED',
-                    detail: 'EMQX Cloud · Port 8084 (WSS) / 8883 (TLS) · Klik untuk Uji',
-                    interactive: true,
-                    onClick: () => setMqttModalOpen(true),
+                    label: 'Backend Gateway',
+                    status: gatewayStatus === 'connected'
+                      ? (gatewayHealth && !gatewayHealth.mqttConnected
+                        ? 'BROKER DISCONNECTED'
+                        : (isLiveTelemetry ? (isTelemetryStale ? 'STALE' : 'CONNECTED LIVE') : 'READY'))
+                      : gatewayStatus === 'connecting'
+                      ? 'CONNECTING'
+                      : 'OFFLINE',
+                    detail: `HTTP :3000 · MQTT: ${gatewayHealth ? (gatewayHealth.mqttConnected ? 'Connected' : 'Disconnected') : 'Checking...'} · Uptime: ${gatewayHealth?.uptimeSeconds ?? 0}s`,
                   },
                   { label: 'ESP-NOW Link', status: 'ACTIVE', detail: 'Inter-Board Wireless Mesh (CH 6)' },
-                  { label: '5 Hardware Sensor Node', status: isLiveMqtt ? 'STREAMING' : 'CALIBRATED', detail: 'Suhu, RH (DHT22), Tanah (v1.2), Cahaya (LDR), Hujan (FC-37)' },
-                  { label: 'Scanner Motor L298N', status: isLiveMqtt ? 'OUT3/4 LIVE' : 'SIMULATED', detail: `${motorDriverInfo} (GPIO 16 & 17) · @ ${railPositionMm} mm` },
+                  {
+                    label: 'Sensor Hardware Topology',
+                    status: isLiveTelemetry && !isTelemetryStale ? 'STREAMING' : 'OFFLINE',
+                    detail: 'Fisik: DHT22 (Suhu, RH), Tanah v1.2, MQ-135, Flame Sensor (Tanpa Hujan/Cahaya)',
+                  },
+                  {
+                    label: 'Scanner Motor L298N',
+                    status: 'FAIL-CLOSED',
+                    detail: 'Kontrol dinonaktifkan · Fail-Closed Safety Gate aktif',
+                  },
                 ].map((dev: any) => (
                   <article
                     key={dev.label}
@@ -2718,21 +3349,23 @@ export const App: React.FC = () => {
                 ))}
               </div>
             </section>
+          </>
+        )}
 
-            {/* 10. FOOTER */}
+        {/* 10. FOOTER */}
             <footer className="mt-12 py-8 border-t border-[#D6DCCE] text-center text-xs text-[#50645F]">
               <div className="flex items-center justify-center gap-2 mb-1.5 flex-wrap">
                 <span className="font-bold text-[#263A35] font-display flex items-center gap-1.5">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="#4E635E">
                     <path d="M12 0 C12 7 17 12 24 12 C17 12 12 17 12 24 C12 17 7 12 0 12 C7 12 12 7 12 0 Z" />
                   </svg>
-                  <span>AGRAPATHA × FLORA</span>
+                  <span>AGRAPATHA</span>
                 </span>
                 <span>·</span>
                 <span>Smart Forest Fire &amp; Botanical AI Vision</span>
                 <span>·</span>
                 <span className="text-[#4E635E] font-semibold">
-                  model_hazard.h (517 Montesinho) &amp; grenvis_sensor_model.h (9,000 FLORA)
+                  model_hazard.h (517 Montesinho) &amp; grenvis_sensor_model.h (TFLite Micro)
                 </span>
               </div>
               <p className="text-[11px] text-[#50645F]/80 max-w-xl mx-auto leading-relaxed m-0">
@@ -2752,19 +3385,6 @@ export const App: React.FC = () => {
           <span className="w-2 h-2 rounded-full bg-[#8FBEA8] animate-pulse" />
           <span>{toast.message}</span>
         </div>
-
-        {/* EMQX Cloud MQTT Diagnostic & Testing Modal */}
-        <MqttTestModal
-          isOpen={mqttModalOpen}
-          onClose={() => setMqttModalOpen(false)}
-          onApplyTelemetry={(data) => {
-            setTemp(data.temp);
-            setRh(data.rh);
-            setSoilMoisture(data.soilMoisture);
-            if (data.rain !== undefined) setRain(data.rain);
-            showToast(`Telemetri EMQX: ${data.temp}°C · RH ${data.rh}% · Tanah ${data.soilMoisture}% · Hujan ${data.rain ?? 0} mm/h`);
-          }}
-        />
       </div>
     </div>
   );
