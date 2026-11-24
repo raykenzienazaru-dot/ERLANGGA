@@ -1578,15 +1578,16 @@ export const App: React.FC = () => {
 
         {/* Main Console Workspace */}
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-7 xl:p-8 2xl:p-9 max-w-360 xl:max-w-[1560px] 2xl:max-w-[1680px] mx-auto w-full overflow-x-clip">
-          {/* Top Console Header Banner */}
+          {/* Top Console Header Banner (Glassmorphic) */}
           <div
             ref={headerRef}
-            className="rounded-2xl border border-[#5E682B] bg-[#737F35] p-4 sm:p-5 mb-5 shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative overflow-hidden"
+            className="rounded-2xl border border-[#869440]/60 bg-[#737F35]/80 backdrop-blur-xl backdrop-saturate-150 p-4 sm:p-5 mb-5 shadow-[0_8px_32px_0_rgba(115,127,53,0.22)] flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative overflow-hidden ring-1 ring-white/10"
           >
-            {/* Top Accent Strip - Peach #F1D2A1 */}
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#F1D2A1] shadow-[0_1px_6px_rgba(241,210,161,0.5)]" />
+            {/* Glassmorphic Ambient Highlight & Shimmer Strip */}
+            <div className="absolute inset-0 bg-gradient-to-br from-white/[0.09] via-transparent to-black/[0.12] pointer-events-none" />
+            <div className="absolute top-0 left-0 right-0 h-0.5 animate-nav-shimmer shadow-[0_1px_8px_rgba(241,210,161,0.6)] z-10" />
 
-            <div className="min-w-0">
+            <div className="min-w-0 relative z-1">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold tracking-widest text-[#F1D2A1] uppercase flex items-center gap-1.5 truncate font-mono">
                   <img src="/agrapatha-logo.png" alt="Logo AGRAPATHA" className="w-3.5 h-3.5 object-contain shrink-0 inline-block drop-shadow-xs" />
@@ -1598,11 +1599,11 @@ export const App: React.FC = () => {
               </h1>
               <p className="text-xs text-[#F1D2A1]/90 mt-1 leading-relaxed">
                 Realtime FWI sensor telemetry,{' '}
-                <code className="font-mono text-[#F1D2A1] px-1.5 py-0.5 rounded border border-[#869440] bg-[#5E682B]">
+                <code className="font-mono text-[#F1D2A1] px-1.5 py-0.5 rounded border border-[#869440]/60 bg-[#5E682B]/60 backdrop-blur-md">
                   model_hazard.h
                 </code>{' '}
                 Random Forest (100 trees), and{' '}
-                <code className="font-mono text-[#F1D2A1] px-1.5 py-0.5 rounded border border-[#869440] bg-[#5E682B]">
+                <code className="font-mono text-[#F1D2A1] px-1.5 py-0.5 rounded border border-[#869440]/60 bg-[#5E682B]/60 backdrop-blur-md">
                   grenvis_sensor_model.h
                 </code>{' '}
                 evaluation.
