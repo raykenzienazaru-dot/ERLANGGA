@@ -7,7 +7,6 @@ import {
 import { FloraSplash } from './components/FloraSplash';
 import { FloraKaggleSection } from './components/FloraKaggleSection';
 import { FloraHistoryCanvas, type TelemetryHistoryPoint } from './components/FloraHistoryCanvas';
-import { FloraBmkgCard } from './components/FloraBmkgCard';
 import { Model1HazardView } from './components/Model1HazardView';
 import { Model2BotanicalView } from './components/Model2BotanicalView';
 import {
@@ -67,7 +66,6 @@ import {
 
 const SECTION_IDS = [
   'overview',
-  'bmkg',
   'monitoring',
   'analysis',
   'benchmarks',
@@ -1019,7 +1017,6 @@ export const App: React.FC = () => {
   const navItems = useMemo(
     () => [
       { id: 'overview', label: 'Overview Status', badge: hazardResult ? hazardResult.riskLevel : undefined },
-      { id: 'bmkg', label: 'BMKG Macro Weather', badge: 'BMKG' },
       { id: 'monitoring', label: 'Live Sensors (FWI & ADC)' },
       { id: 'analysis', label: 'AI Model Analysis (.h)' },
       { id: 'benchmarks', label: 'Kaggle Dataset Information', badge: 'AI.H' },
@@ -2049,9 +2046,6 @@ export const App: React.FC = () => {
                     </div>
                   </div>
                 </section>
-
-                {/* BMKG Regional Macro-Weather Context */}
-                <FloraBmkgCard />
 
                 {/* 2. LIVE ENVIRONMENTAL SENSORS (6-Card Grid with exact Kaggle Dataset Ranges) */}
                 <section id="monitoring" className="scroll-mt-6 sm:scroll-mt-8">
