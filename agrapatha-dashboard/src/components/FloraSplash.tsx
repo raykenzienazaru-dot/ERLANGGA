@@ -551,11 +551,8 @@ export const FloraSplash: React.FC<FloraSplashProps> = ({ onComplete }) => {
             </div>
             <div className="hidden md:block flex-1" />
             <div className="flex items-start gap-2.5 max-w-xs text-left">
-              <span className="text-[#597C00] mt-0.5 shrink-0">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 0 C12 7 17 12 24 12 C17 12 12 17 12 24 C12 17 7 12 0 12 C7 12 12 7 12 0 Z" />
-                  <circle cx="12" cy="12" r="2.5" fill="#EFEFEE" />
-                </svg>
+              <span className="mt-0.5 shrink-0 w-5 h-5 flex items-center justify-center">
+                <img src="/agrapatha-logo.png" alt="Logo AGRAPATHA" className="w-5 h-5 object-contain" />
               </span>
               <p className="text-[9px] sm:text-[10px] leading-relaxed select-none animate-text-flora-color-delayed">
                 Autonomous forest fire &amp; botanical observation ecosystem powered by C header Edge-AI (model_hazard.h), FWI microclimate telemetry, and L298N rail actuation.

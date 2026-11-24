@@ -129,21 +129,6 @@ export const Model2BotanicalView: React.FC<Model2BotanicalViewProps> = ({
               </div>
             </div>
           </div>
-
-          <div className="mt-4 pt-3 border-t border-[#DCE4E1] bg-[#F8FAF9] p-3 rounded-xl border">
-            <span className="text-[10px] font-bold text-[#56612E] uppercase tracking-wider block mb-1">
-              Agronomic Assessment
-            </span>
-            <p className="text-[11px] text-[#4D6A75] leading-relaxed m-0">
-              {isLiveValid && typeof soilMoisture === 'number'
-                ? soilMoisture >= 35
-                  ? 'Kadar air tanah berada pada kapasitas lapang optimal, perakaran terhidrasi sempurna.'
-                  : soilMoisture >= 25
-                  ? 'Kadar air tanah mulai menurun, disarankan pemantauan jadwal irigasi preventif.'
-                  : 'Defisit air perakaran kritis, kelembapan serasah di bawah ambang aman.'
-                : 'Menunggu pembacaan sensor tanah kapasitif v1.2 untuk evaluasi hidrologi rizosfer.'}
-            </p>
-          </div>
         </section>
 
         {/* Right Column: Botanical Environmental Sensors (7 cols) */}

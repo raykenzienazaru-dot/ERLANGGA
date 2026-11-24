@@ -15,14 +15,14 @@ export const FloraKaggleSection: React.FC<KaggleDatasetSectionProps> = React.mem
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-2 border-b border-[#D6DCCE]">
         <div>
           <span className="text-[10px] font-bold text-[#4E8577] uppercase tracking-widest block font-mono">
-            Repository Evidence &amp; Dataset Provenance
+            Dataset Provenance &amp; Benchmark Evaluation
           </span>
           <h2 className="text-xl font-bold text-[#2C2922] font-display mt-0.5">
             Kaggle Dataset Information &amp; Model Benchmarks
           </h2>
         </div>
         <span className="text-xs font-semibold px-3 py-1 rounded-full border bg-[#F1F5F3] text-[#4E8577] border-[#DCE4E1]">
-          Verifiable Repository Artifacts
+          Verified Kaggle Benchmarks
         </span>
       </div>
 
@@ -48,17 +48,6 @@ export const FloraKaggleSection: React.FC<KaggleDatasetSectionProps> = React.mem
               >
                 Kaggle Notebook ↗
               </a>
-            </div>
-
-            {/* Repository Evidence Box */}
-            <div className="mb-4 bg-[#F8FAF9] border border-[#DCE4E1] p-3 rounded-xl text-xs text-[#2C2922] space-y-1">
-              <div className="flex items-center justify-between text-[11px] text-[#4D6A75]">
-                <span className="font-semibold text-[#56612E]">Berkas Repositori Terverifikasi:</span>
-                <span className="font-mono">forestfires.csv (25.996 B)</span>
-              </div>
-              <p className="text-[11px] text-[#4D6A75] m-0 leading-relaxed">
-                Digunakan untuk melatih <code className="font-mono text-[#4E8577]">model_hazard.h</code> (100-Tree Random Forest via m2cgen, 19.591 baris C). Notebook pelatihan <code className="font-mono text-[#4E8577]">forest-fire-area-classification.ipynb</code> tersimpan di root direktori.
-              </p>
             </div>
 
             {/* Dataset Split Pill Row */}
@@ -120,15 +109,6 @@ export const FloraKaggleSection: React.FC<KaggleDatasetSectionProps> = React.mem
               </table>
             </div>
 
-            {/* Official x_new test vector reference */}
-            <div className="mt-3.5 bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3 shadow-2xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#4E8577] block mb-1">
-                Notebook Test Vector Reference (Cell 25, 27, 29, 30, 32)
-              </span>
-              <code className="text-[11px] font-mono text-[#263A35] block break-all">
-                x_new = [[1, 4, 9, 1, 91.5, 130.1, 807.1, 7.5, 21.3, 35, 2.2, 0]] → Output: &apos;On Fire&apos; (63.68% High Risk)
-              </code>
-            </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-[#D6DCCE] text-[11px] text-[#50645F]">
@@ -156,17 +136,6 @@ export const FloraKaggleSection: React.FC<KaggleDatasetSectionProps> = React.mem
               >
                 Kaggle Dataset ↗
               </a>
-            </div>
-
-            {/* Provenance Box */}
-            <div className="mb-4 bg-[#F8FAF9] border border-[#DCE4E1] p-3 rounded-xl text-xs text-[#263A35] space-y-1">
-              <div className="flex items-center justify-between text-[11px] text-[#4D6A75]">
-                <span className="font-semibold text-[#56612E]">Artefak Firmware Terverifikasi:</span>
-                <span className="font-mono">grenvis_sensor_model.h (19.187 B)</span>
-              </div>
-              <p className="text-[11px] text-[#4D6A75] m-0 leading-relaxed">
-                Model TFLite Micro berukuran 2.988 bytes array C yang dieksekusi langsung di memori untuk evaluasi mikroklimat tanah dan udara perakaran.
-              </p>
             </div>
 
             <div className="grid grid-cols-3 gap-2.5 mb-4">
@@ -227,19 +196,10 @@ export const FloraKaggleSection: React.FC<KaggleDatasetSectionProps> = React.mem
                 </div>
               </div>
             </div>
-
-            <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#4E635E] block mb-1">
-                Dual Edge-AI Firmware Architecture (C Header Models)
-              </span>
-              <p className="text-xs text-[#263A35] leading-relaxed m-0">
-                Sistem AGRAPATHA mengintegrasikan <strong>model_hazard.h</strong> (100-Tree Random Forest <code className="font-mono">m2cgen</code>, 19.591 baris C untuk fitur input <code className="font-mono">[temp, RH, wind, rain, FFMC, DMC]</code>) dan <strong>grenvis_sensor_model.h</strong> (TFLite Micro Neural Network 3→16→8→3 <code className="font-mono">2.988 bytes</code> untuk evaluasi stres mikroklimat).
-              </p>
-            </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-[#D6DCCE] text-[11px] text-[#50645F]">
-            Kedua model C header dieksekusi secara deterministik langsung di memori perangkat edge dan browser tanpa pembulatan.
+            Evaluasi parameter mikroklimat diproses secara deterministik untuk pemantauan lingkungan perakaran dan kanopi.
           </div>
         </div>
       </div>

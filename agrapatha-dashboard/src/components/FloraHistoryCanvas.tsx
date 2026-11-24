@@ -1,4 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Flame,
+  ThermometerSun,
+  Sprout,
+  ShieldAlert,
+} from 'lucide-react';
 
 export interface TelemetryHistoryPoint {
   timestamp: string;
@@ -16,8 +22,16 @@ export interface TelemetryHistoryPoint {
   vision_prediction: string;
 }
 
-interface FloraHistoryCanvasProps {
+export interface FloraHistoryCanvasProps {
   history: TelemetryHistoryPoint[];
+  liveTemp?: number | null;
+  liveRh?: number | null;
+  liveSoil?: number | null;
+  liveFfmc?: number | null;
+  liveRisk?: 'LOW' | 'MODERATE' | 'HIGH' | null;
+  liveVisionPrediction?: string | null;
+  liveFlameDetected?: number | null;
+  isLive?: boolean;
 }
 
 function formatTimeShort(iso: string): string {
@@ -30,7 +44,17 @@ function formatTimeShort(iso: string): string {
   }
 }
 
-export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = React.memo(({ history }) => {
+export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = React.memo(({
+  history,
+  liveTemp,
+  liveRh,
+  liveSoil,
+  liveFfmc,
+  liveRisk,
+  liveVisionPrediction,
+  liveFlameDetected,
+  isLive,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [timeRange, setTimeRange] = useState<'LIVE' | '1H' | '6H' | '24H'>('24H');
   const [channelFilter, setChannelFilter] = useState<'ALL' | 'TEMP' | 'HUM' | 'FFMC' | 'SOIL'>('ALL');
@@ -478,6 +502,368 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = React.memo(
             </span>
           </div>
         </div>
+
+        {/* =========================================================================
+            PANDUAN PENANGANAN & REKOMENDASI SOLUSI CERDAS (DI BAWAH GRAFIK MULTISENSOR)
+            Otomatis aktif saat ada problem kebakaran, suhu-kelembapan, dan tanah kering/basah
+           ========================================================================= */}
+        {(() => {
+          // Effective parameters: prioritize live telemetry, fallback to latest historical point
+          const currentTemp = typeof liveTemp === 'number' ? liveTemp : latestRec?.temperature ?? null;
+          const currentRh = typeof liveRh === 'number' ? liveRh : latestRec?.humidity ?? null;
+          const currentSoil = typeof liveSoil === 'number' ? liveSoil : latestRec?.soil_moisture ?? null;
+          const currentFfmc = typeof liveFfmc === 'number' ? liveFfmc : latestRec?.ffmc ?? null;
+          const currentRisk = liveRisk || latestRec?.sensor_risk || null;
+          const currentVision = liveVisionPrediction || latestRec?.vision_prediction || null;
+          const currentFlame = typeof liveFlameDetected === 'number' ? liveFlameDetected : null;
+
+          // 1. Fire Diagnostic State
+          const isFireAlert =
+            currentFlame === 1 ||
+            (currentVision && currentVision.toLowerCase().includes('fire')) ||
+            (currentVision && currentVision.toLowerCase().includes('smoke')) ||
+            (currentFfmc !== null && currentFfmc >= 89.5) ||
+            currentRisk === 'HIGH';
+          const isFireWarning = !isFireAlert && ((currentFfmc !== null && currentFfmc >= 82) || currentRisk === 'MODERATE');
+
+          // 2. Microclimate Diagnostic State
+          const isMicroclimateHotDry = (currentTemp !== null && currentTemp >= 30) || (currentRh !== null && currentRh <= 40);
+          const isMicroclimateColdWet = !isMicroclimateHotDry && ((currentRh !== null && currentRh >= 88) || (currentTemp !== null && currentTemp <= 14));
+
+          // 3. Soil Moisture Diagnostic State
+          const isSoilDry = currentSoil !== null && currentSoil < 30;
+          const isSoilWet = currentSoil !== null && currentSoil > 75;
+
+          return (
+            <div className="mt-6 pt-5 border-t border-[#D6DCCE]">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4">
+                <div>
+                  <span className="text-[10px] font-bold text-[#56612E] uppercase tracking-widest block font-mono">
+                    Panduan Tindakan &amp; Mitigasi Operasional
+                  </span>
+                  <h3 className="text-base sm:text-lg font-bold text-[#2C2922] font-display flex items-center gap-2 mt-0.5">
+                    <ShieldAlert size={18} className="text-[#56612E] shrink-0" />
+                    <span>Solusi Penanganan Masalah (Multisensor Mitigation Protocol)</span>
+                  </h3>
+                </div>
+                <span className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-[#FAF9F5] border border-[#DCE4E1] text-[#2C2922] shadow-2xs font-mono">
+                  {isLive ? '● Live Telemetri Aktif' : '○ Standby & Protokol Kontingensi'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* ---------------- CARD 1: MITIGASI MASALAH KEBAKARAN ---------------- */}
+                <div
+                  className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border transition-all duration-300 ${
+                    isFireAlert
+                      ? 'bg-[#FEF2F2] border-[#F87171] shadow-md ring-1 ring-[#EF4444]/20'
+                      : isFireWarning
+                      ? 'bg-[#FFFBEB] border-[#FBBF24] shadow-xs ring-1 ring-[#F59E0B]/20'
+                      : 'bg-[#F9F8F5] border-[#DCE4E1] shadow-2xs'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-black/10">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`w-7 h-7 rounded-xl flex items-center justify-center text-white shrink-0 ${
+                            isFireAlert ? 'bg-[#DC2626]' : isFireWarning ? 'bg-[#D97706]' : 'bg-[#56612E]'
+                          }`}
+                        >
+                          <Flame size={15} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider block text-[#2C2922]/70 font-mono">
+                            Domain 1 · Kebakaran
+                          </span>
+                          <h4 className="text-sm font-bold text-[#2C2922] font-display">
+                            Bahaya Api &amp; Serasah
+                          </h4>
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full font-mono shrink-0 ${
+                          isFireAlert
+                            ? 'bg-[#DC2626] text-white animate-pulse'
+                            : isFireWarning
+                            ? 'bg-[#D97706] text-white'
+                            : 'bg-[#56612E] text-white'
+                        }`}
+                      >
+                        {isFireAlert ? 'KRITIS' : isFireWarning ? 'WASPADA' : 'AMAN'}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 text-xs">
+                      <p className="text-[11px] text-[#2C2922]/90 leading-relaxed font-medium">
+                        {isFireAlert
+                          ? 'Terdeteksi anomali api/asap atau indeks FFMC ≥ 89.5 (Zona Mudah Menyala). Eksekusi protokol mitigasi darurat sekarang!'
+                          : isFireWarning
+                          ? 'Bahan bakar halus serasah mengalami pengeringan aktif (FFMC 82–89). Api mudah menyebar jika terkena percikan.'
+                          : 'Kondisi kelembapan bahan bakar halus (FFMC < 82) dan prediksi model AI berada dalam zona aman.'}
+                      </p>
+
+                      <div className="my-2.5 px-2.5 py-1.5 rounded-lg bg-white/70 border border-black/5 text-[11px] font-mono text-[#2C2922] flex items-center justify-between">
+                        <span>Status: FFMC {currentFfmc !== null ? currentFfmc.toFixed(1) : '--'} · Risk: {currentRisk || 'STANDBY'}</span>
+                        <span className="font-bold">{isFireAlert ? 'PERLU TINDAKAN' : 'NORMAL'}</span>
+                      </div>
+
+                      <div className="space-y-1.5 mt-3">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#56612E] block">
+                          Instruksi Solusi Penanganan:
+                        </span>
+                        <ul className="space-y-1.5 text-[11px] text-[#2C2922]/90">
+                          <li className="flex items-start gap-1.5">
+                            <span className="font-bold text-[#56612E] shrink-0">1.</span>
+                            <span><strong>Aktivasi Misting Rel L298N:</strong> Nyalakan semprotan air kabut rel ke koordinat anomali panas/api.</span>
+                          </li>
+                          <li className="flex items-start gap-1.5">
+                            <span className="font-bold text-[#56612E] shrink-0">2.</span>
+                            <span><strong>Peringatan &amp; Evakuasi:</strong> Bunyikan alarm pos dan evakuasi tim ke arah berlawanan mata angin (<em>upwind</em>).</span>
+                          </li>
+                          <li className="flex items-start gap-1.5">
+                            <span className="font-bold text-[#56612E] shrink-0">3.</span>
+                            <span><strong>Pembuatan Sekat Bakar (Firebreak):</strong> Bersihkan serasah kering 15–20 m di perimeter rambatan api.</span>
+                          </li>
+                          <li className="flex items-start gap-1.5">
+                            <span className="font-bold text-[#56612E] shrink-0">4.</span>
+                            <span><strong>Eskalasi Posko:</strong> Laporkan telemetri konsol ke posko penjaga hutan dan armada tangki pemadam.</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ---------------- CARD 2: KONDISI SUHU & KELEMBAPAN ---------------- */}
+                <div
+                  className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border transition-all duration-300 ${
+                    isMicroclimateHotDry
+                      ? 'bg-[#FFFBEB] border-[#FBBF24] shadow-xs ring-1 ring-[#F59E0B]/20'
+                      : isMicroclimateColdWet
+                      ? 'bg-[#F0F9FF] border-[#7DD3FC] shadow-xs ring-1 ring-[#0284C7]/20'
+                      : 'bg-[#F9F8F5] border-[#DCE4E1] shadow-2xs'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-black/10">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`w-7 h-7 rounded-xl flex items-center justify-center text-white shrink-0 ${
+                            isMicroclimateHotDry
+                              ? 'bg-[#D97706]'
+                              : isMicroclimateColdWet
+                              ? 'bg-[#0284C7]'
+                              : 'bg-[#56612E]'
+                          }`}
+                        >
+                          <ThermometerSun size={15} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider block text-[#2C2922]/70 font-mono">
+                            Domain 2 · Mikroklimat
+                          </span>
+                          <h4 className="text-sm font-bold text-[#2C2922] font-display">
+                            Suhu &amp; Kelembapan Udara
+                          </h4>
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full font-mono shrink-0 ${
+                          isMicroclimateHotDry
+                            ? 'bg-[#D97706] text-white'
+                            : isMicroclimateColdWet
+                            ? 'bg-[#0284C7] text-white'
+                            : 'bg-[#56612E] text-white'
+                        }`}
+                      >
+                        {isMicroclimateHotDry
+                          ? 'PANAS & KERING'
+                          : isMicroclimateColdWet
+                          ? 'LEMBAP JENUH'
+                          : 'OPTIMAL'}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 text-xs">
+                      <p className="text-[11px] text-[#2C2922]/90 leading-relaxed font-medium">
+                        {isMicroclimateHotDry
+                          ? 'Suhu udara tinggi (≥ 30°C) atau kelembapan udara rendah (≤ 40%) memicu stres termal dan dehidrasi cepat vegetasi kanopi.'
+                          : isMicroclimateColdWet
+                          ? 'Kelembapan udara sangat tinggi (≥ 88%) berisiko menimbulkan embun kondensasi dan pertumbuhan jamur patogen daun.'
+                          : 'Temperatur dan kelembapan berada pada kesetimbangan ideal fotosintesis (20–28°C, RH 50–80%).'}
+                      </p>
+
+                      <div className="my-2.5 px-2.5 py-1.5 rounded-lg bg-white/70 border border-black/5 text-[11px] font-mono text-[#2C2922] flex items-center justify-between">
+                        <span>Kondisi: {currentTemp !== null ? `${currentTemp.toFixed(1)}°C` : '--'} · RH {currentRh !== null ? `${currentRh.toFixed(0)}%` : '--'}</span>
+                        <span className="font-bold">{isMicroclimateHotDry || isMicroclimateColdWet ? 'ADAPTASI MIKRO' : 'STABIL'}</span>
+                      </div>
+
+                      <div className="space-y-1.5 mt-3">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#56612E] block">
+                          Instruksi Solusi Penanganan:
+                        </span>
+                        <ul className="space-y-1.5 text-[11px] text-[#2C2922]/90">
+                          {isMicroclimateHotDry ? (
+                            <>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#D97706] shrink-0">1.</span>
+                                <span><strong>Pengkabutan Kanopi (Misting):</strong> Semprotkan kabut air mikro 10–15 menit untuk meredam suhu 3–5°C dan meningkatkan kelembapan.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#D97706] shrink-0">2.</span>
+                                <span><strong>Hindari Jam Terik Ekstrem:</strong> Tunda aktivitas patroli fisik berat di lapangan antara pukul 11:00 – 15:00 WIB.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#D97706] shrink-0">3.</span>
+                                <span><strong>Pemasangan Naungan Sementara:</strong> Berikan naungan parsial pada bibit muda di persemaian agar terhindar dari stres respirasi.</span>
+                              </li>
+                            </>
+                          ) : isMicroclimateColdWet ? (
+                            <>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#0284C7] shrink-0">1.</span>
+                                <span><strong>Pencegahan Jamur Daun:</strong> Waspadai spora embun tepung (<em>powdery mildew</em>) dan karat daun saat daun basah berkepanjangan.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#0284C7] shrink-0">2.</span>
+                                <span><strong>Hentikan Misting Buatan:</strong> Matikan suplai pengkabutan kanopi hingga kelembapan udara turun di bawah 80%.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#0284C7] shrink-0">3.</span>
+                                <span><strong>Aerasi Tajuk Bawah:</strong> Pangkas ranting bawah yang terlalu rapat agar udara lembap dapat tersirkulasi keluar.</span>
+                              </li>
+                            </>
+                          ) : (
+                            <>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#56612E] shrink-0">1.</span>
+                                <span><strong>Pertahankan Ventilasi Alami:</strong> Mikroklimat alami seimbang, tidak diperlukan intervensi buatan.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#56612E] shrink-0">2.</span>
+                                <span><strong>Pantau Siklus Diurnal:</strong> Amati tren grafik multi-sensor harian untuk mendeteksi anomali cuaca mikro mendadak.</span>
+                              </li>
+                            </>
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ---------------- CARD 3: KONDISI TANAH KERING ATAU BASAH ---------------- */}
+                <div
+                  className={`rounded-2xl p-4 sm:p-5 flex flex-col justify-between border transition-all duration-300 ${
+                    isSoilDry
+                      ? 'bg-[#FEF3C7] border-[#FCD34D] shadow-xs ring-1 ring-[#D97706]/20'
+                      : isSoilWet
+                      ? 'bg-[#EFF6FF] border-[#93C5FD] shadow-xs ring-1 ring-[#0284C7]/20'
+                      : 'bg-[#F9F8F5] border-[#DCE4E1] shadow-2xs'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-black/10">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`w-7 h-7 rounded-xl flex items-center justify-center text-white shrink-0 ${
+                            isSoilDry ? 'bg-[#D97706]' : isSoilWet ? 'bg-[#0284C7]' : 'bg-[#56612E]'
+                          }`}
+                        >
+                          <Sprout size={15} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider block text-[#2C2922]/70 font-mono">
+                            Domain 3 · Hidrasi Tanah
+                          </span>
+                          <h4 className="text-sm font-bold text-[#2C2922] font-display">
+                            Kondisi Tanah &amp; Irigasi
+                          </h4>
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full font-mono shrink-0 ${
+                          isSoilDry
+                            ? 'bg-[#D97706] text-white'
+                            : isSoilWet
+                            ? 'bg-[#0284C7] text-white'
+                            : 'bg-[#56612E] text-white'
+                        }`}
+                      >
+                        {isSoilDry ? 'TANAH KERING' : isSoilWet ? 'BASAH JENUH' : 'OPTIMAL'}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 text-xs">
+                      <p className="text-[11px] text-[#2C2922]/90 leading-relaxed font-medium">
+                        {isSoilDry
+                          ? 'Kelembapan tanah < 30%, berada di bawah kapasitas lapang dan mendekati titik layu tanaman (wilting point). Lakukan irigasi!'
+                          : isSoilWet
+                          ? 'Kelembapan tanah > 75%, terjadi kejenuhan air berisiko anoksia (kekurangan oksigen akar) dan busuk akar (root rot).'
+                          : 'Kelembapan tanah berada pada kapasitas lapang optimal (35% – 70%) untuk penyerapan air dan hara botani.'}
+                      </p>
+
+                      <div className="my-2.5 px-2.5 py-1.5 rounded-lg bg-white/70 border border-black/5 text-[11px] font-mono text-[#2C2922] flex items-center justify-between">
+                        <span>Sensor v1.2: {currentSoil !== null ? `${currentSoil.toFixed(1)}%` : '--'}</span>
+                        <span className="font-bold">{isSoilDry ? 'IRIGASI DIPERLUKAN' : isSoilWet ? 'DRAINASE DIPERLUKAN' : 'NORMAL'}</span>
+                      </div>
+
+                      <div className="space-y-1.5 mt-3">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#56612E] block">
+                          Instruksi Solusi Penanganan:
+                        </span>
+                        <ul className="space-y-1.5 text-[11px] text-[#2C2922]/90">
+                          {isSoilDry ? (
+                            <>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#D97706] shrink-0">1.</span>
+                                <span><strong>Irigasi Tetes Segera (Drip Irrigation):</strong> Alirkan air langsung ke zona perakaran dalam untuk mengembalikan kelembapan ke 50–60%.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#D97706] shrink-0">2.</span>
+                                <span><strong>Aplikasi Mulsa Organik:</strong> Tebarkan serasah daun atau jerami di atas permukaan tanah guna menahan laju evaporasi.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#D97706] shrink-0">3.</span>
+                                <span><strong>Jadwal Penyiraman Pagi/Sore:</strong> Lakukan pengairan sebelum pukul 08:00 atau setelah 17:00 untuk penyerapan maksimal.</span>
+                              </li>
+                            </>
+                          ) : isSoilWet ? (
+                            <>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#0284C7] shrink-0">1.</span>
+                                <span><strong>Hentikan Suplai Irigasi Otomatis:</strong> Kunci seluruh katup solenoid air (<em>fail-closed</em>) dan tunda siklus pengairan berikutnya.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#0284C7] shrink-0">2.</span>
+                                <span><strong>Buka Saluran Parit &amp; Rorak:</strong> Bersihkan endapan tanah pada parit drainase agar genangan air permukaan lekas terbuang.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#0284C7] shrink-0">3.</span>
+                                <span><strong>Aerasi Media Tanah:</strong> Berikan jeda pengeringan tanah alami untuk mencegah pembusukan akar dan memulihkan sirkulasi O2.</span>
+                              </li>
+                            </>
+                          ) : (
+                            <>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#56612E] shrink-0">1.</span>
+                                <span><strong>Pertahankan Siklus Irigasi Terjadwal:</strong> Lanjutkan pemberian air dengan debit reguler sesuai kebutuhan jenis tanaman.</span>
+                              </li>
+                              <li className="flex items-start gap-1.5">
+                                <span className="font-bold text-[#56612E] shrink-0">2.</span>
+                                <span><strong>Verifikasi Kedalaman Probe:</strong> Pastikan sensor kelembapan tanah tertancap stabil pada kedalaman 10–15 cm zona rizosfer.</span>
+                              </li>
+                            </>
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </section>
 
       {/* 24-Hour Statistical Summary Rollup */}
@@ -497,70 +883,52 @@ export const FloraHistoryCanvas: React.FC<FloraHistoryCanvasProps> = React.memo(
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between">
             <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg Temp
             </span>
             <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
               {avgTemp.toFixed(1)}°C
             </span>
-            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
-              Ref: 18.9°C
-            </span>
           </div>
-          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between">
             <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg RH
             </span>
             <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
               {avgHum.toFixed(1)}%
             </span>
-            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
-              Ref: 44.3%
-            </span>
           </div>
-          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between">
             <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg FFMC
             </span>
             <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
               {avgFfmc.toFixed(1)}
             </span>
-            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
-              Ref: 90.6
-            </span>
           </div>
-          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between">
             <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Session Avg Soil
             </span>
             <span className="text-sm font-bold font-tabular text-[#263A35] block mt-1">
               {avgSoil.toFixed(1)}%
             </span>
-            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
-              Ref: 67.2%
-            </span>
           </div>
-          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between">
             <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Dominant Vision
             </span>
             <span className="text-sm font-bold font-display text-[#263A35] block mt-1 truncate">
               {latestRec?.vision_prediction || 'Healthy Canopy'}
             </span>
-            <span className="text-[10px] text-[#4E635E] font-mono block mt-0.5 truncate">
-              ESP-NOW Cam
-            </span>
           </div>
-          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between min-h-[88px]">
+          <div className="bg-[#F5F4EE] border border-[#E2E0CB] hover:border-[#818C78] transition-colors p-3 rounded-xl shadow-2xs flex flex-col justify-between">
             <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block truncate">
               Dominant Risk
             </span>
             <span className="text-sm font-bold font-tabular text-[#4E635E] block mt-1">
               {latestRec?.sensor_risk || 'LOW'}
-            </span>
-            <span className="text-[10px] text-[#50645F] font-mono block mt-0.5 truncate">
-              {latestRec?.sensor_confidence.toFixed(1)}% conf
             </span>
           </div>
         </div>
