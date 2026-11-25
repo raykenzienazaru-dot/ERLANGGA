@@ -2528,7 +2528,7 @@ export const App: React.FC = () => {
 
             {/* 5. CAMERA STREAM CAPTURE SECTION (#cameraCapture) */}
             {(currentTab === 'overview' || currentTab === 'all' || currentTab === 'model_vision') && (
-              <section id="cameraCapture" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs">
+              <section id="cameraCapture" className="scroll-mt-6 sm:scroll-mt-8 flora-card p-5 sm:p-6 shadow-xs border border-[#EAD39D]">
                 {/* Header Bar with Title and Domain Selector */}
                 <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
                   <div>
@@ -2545,7 +2545,7 @@ export const App: React.FC = () => {
                   {/* Domain Selector & Status Pill */}
                   <div className="flex items-center gap-2 flex-wrap">
                     {/* Domain Toggle Tabs */}
-                    <div className="flex p-0.5 rounded-full bg-[#E2E0CB] border border-[#D6DCCE]">
+                    <div className="flex p-0.5 rounded-full bg-[#E2E0CB] border border-[#EAD39D]">
                       <button
                         type="button"
                         onClick={() => handleDomainChange('wildfire')}
@@ -2604,7 +2604,7 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Action Toolbar: Camera Live vs Upload vs Retake vs Analyze */}
-                <div className="flex flex-wrap justify-between items-center gap-2 mb-4 p-2.5 rounded-xl bg-[#F5F4EE] border border-[#E2E0CB]">
+                <div className="flex flex-wrap justify-between items-center gap-2 mb-4 p-2.5 rounded-xl bg-[#F5F4EE] border border-[#EAD39D]">
                   <div className="flex items-center gap-2 flex-wrap">
                     {cameraStatus === 'streaming' ? (
                       <>
@@ -2715,7 +2715,9 @@ export const App: React.FC = () => {
                 {/* Main 2-Column Content Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
                   {/* Left: Video / Image Viewport */}
-                  <div className="lg:col-span-2 relative min-h-85 xl:min-h-95 bg-[#737F35] border border-[#5E682B] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-md">
+                  <div className="lg:col-span-2 relative min-h-85 xl:min-h-95 bg-[#737F35] border-2 border-[#F1D2A1] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-md">
+                    {/* Top Accent Shimmer Line - Cream */}
+                    <div className="absolute top-0 left-0 right-0 h-0.5 animate-nav-shimmer shadow-[0_1px_8px_rgba(241,210,161,0.6)] z-10" />
                     {/* Glassmorphic Ambient Highlight */}
                     <div className="absolute inset-0 bg-gradient-to-br from-white/[0.08] via-transparent to-black/[0.12] pointer-events-none" />
                     {cameraStatus === 'streaming' ? (
@@ -2750,7 +2752,7 @@ export const App: React.FC = () => {
                           className="w-full h-full object-cover absolute inset-0"
                         />
                         {/* Live Stream Top HUD */}
-                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#869440] flex items-center gap-1.5 shadow-xs">
+                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs">
                           <span className={`w-2 h-2 rounded-full ${isVideoReady ? 'bg-[#22C55E] animate-ping' : 'bg-[#EAB308]'}`} />
                           <span>{isVideoReady ? 'LIVE DEVICE CAMERA · MEDIASTREAM' : 'MEMUAT FEED KAMERA...'}</span>
                         </div>
@@ -2763,7 +2765,7 @@ export const App: React.FC = () => {
                           className="w-full h-full object-cover absolute inset-0"
                         />
                         {/* Captured Frame HUD */}
-                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#869440] flex items-center gap-1.5 shadow-xs">
+                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs">
                           <CheckCircle2 size={12} className="text-[#F1D2A1]" />
                           <span>
                             {captureSource === 'camera'
@@ -2777,7 +2779,7 @@ export const App: React.FC = () => {
                     ) : (
                       <>
                         <div className="relative z-10 p-6 max-w-sm flex flex-col items-center gap-3">
-                          <div className="w-12 h-12 rounded-2xl bg-[#5E682B] border border-[#869440] flex items-center justify-center text-[#F1D2A1] shadow-md">
+                          <div className="w-12 h-12 rounded-2xl bg-[#5E682B] border border-[#F1D2A1]/70 flex items-center justify-center text-[#F1D2A1] shadow-md">
                             <Camera size={24} />
                           </div>
                           <div>
@@ -2794,7 +2796,7 @@ export const App: React.FC = () => {
                             <button
                               type="button"
                               onClick={handleStartCamera}
-                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#5E682B] hover:bg-[#525B25] text-white border border-[#869440] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#5E682B] hover:bg-[#525B25] text-white border border-[#F1D2A1]/70 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                             >
                               <Video size={13} />
                               <span>Buka Kamera</span>
@@ -2803,12 +2805,12 @@ export const App: React.FC = () => {
                               type="button"
                               onClick={() => handleFetchGatewayFrame(true)}
                               disabled={isFetchingGatewayFrame}
-                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white hover:bg-[#FAF9F5] text-[#263A35] border border-[#DCE4E1] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white hover:bg-[#FAF9F5] text-[#263A35] border border-[#EAD39D] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
                             >
                               <Camera size={13} />
                               <span>Frame Gateway</span>
                             </button>
-                            <label className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#5E682B] hover:bg-[#525B25] text-white border border-[#869440] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
+                            <label className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#5E682B] hover:bg-[#525B25] text-white border border-[#F1D2A1]/70 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
                               <Upload size={13} />
                               <span>Unggah Foto</span>
                               <input
@@ -2825,7 +2827,7 @@ export const App: React.FC = () => {
 
                     {/* Bottom Viewport Overlay Telemetry */}
                     <div className="absolute inset-x-3 bottom-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 z-10 pointer-events-none">
-                      <div className="px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-medium backdrop-blur-sm border border-[#869440] shadow-xs max-w-full truncate">
+                      <div className="px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-medium backdrop-blur-sm border border-[#F1D2A1]/60 shadow-xs max-w-full truncate">
                         {visionDomain === 'wildfire'
                           ? `Mode: Karhutla · Rel: ${railPositionMm} mm · Source: ${captureSource === 'camera' ? 'Webcam' : captureSource === 'upload' ? 'Upload' : captureSource === 'gateway' ? 'Gateway ESP32-CAM' : 'Standby'}`
                           : `Mode: Diagnosa Daun · Status Layanan: ${isLeafDiseaseApiConfigured() ? 'Tersambung' : 'Belum Dideploy'}`}
@@ -2835,35 +2837,35 @@ export const App: React.FC = () => {
                         {visionDomain === 'wildfire' ? (
                           wildfireResult ? (
                             <>
-                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                                 <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
                                 Healthy: {visionProbs.healthy.toFixed(1)}%
                               </span>
-                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                                 <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#FB923C]" />
                                 Smoke: {visionProbs.smoke.toFixed(1)}%
                               </span>
-                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                                 <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#F87171]" />
                                 Fire: {visionProbs.fire.toFixed(1)}%
                               </span>
                             </>
                           ) : (
-                            <span className="px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#869440] shadow-xs">
+                            <span className="px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#F1D2A1]/60 shadow-xs">
                               {edgePrediction ? `Edge AI: ${edgePrediction}${edgeConfidence !== null ? ` (${(edgeConfidence * 100).toFixed(0)}%)` : ''} · Cloud: Standby` : 'Inferensi Cloud Siap'}
                             </span>
                           )
                         ) : (
                           <>
-                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                               <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
                               Healthy: {leafProbs.healthy.toFixed(1)}%
                             </span>
-                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                               <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#EAB308]" />
                               Powdery: {leafProbs.powdery.toFixed(1)}%
                             </span>
-                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#F1D2A1]/60 flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                               <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#EA580C]" />
                               Rust: {leafProbs.rust.toFixed(1)}%
                             </span>
@@ -2877,7 +2879,7 @@ export const App: React.FC = () => {
                   <div className="flex flex-col justify-between gap-3">
                     <div className="space-y-2.5">
                       {/* Timestamp & Engine Card */}
-                      <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5">
+                      <div className="bg-[#F5F4EE] border border-[#EAD39D] rounded-xl p-3.5">
                         <div className="flex justify-between items-center">
                           <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                             Waktu Pemindaian Optik
@@ -2913,7 +2915,7 @@ export const App: React.FC = () => {
                       </div>
 
                       {/* Detected Pattern & Confidence Card */}
-                      <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 flex justify-between items-center">
+                      <div className="bg-[#F5F4EE] border border-[#EAD39D] rounded-xl p-3.5 flex justify-between items-center">
                         <div>
                           <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                             {visionDomain === 'wildfire' ? 'Pola Citra Terdeteksi' : 'Diagnosa Penyakit Daun'}
@@ -2941,7 +2943,7 @@ export const App: React.FC = () => {
                       </div>
 
                       {/* Classification Meter Bars */}
-                      <div className="bg-[#F5F4EE] border border-[#E2E0CB] rounded-xl p-3.5 space-y-2.5">
+                      <div className="bg-[#F5F4EE] border border-[#EAD39D] rounded-xl p-3.5 space-y-2.5">
                         <div className="flex justify-between items-center mb-0.5">
                           <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                             {visionDomain === 'wildfire'
