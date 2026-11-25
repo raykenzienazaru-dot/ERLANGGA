@@ -17,9 +17,12 @@
 // (e.g., firmware/esp32_sensor_main/credentials.h or firmware/esp32_cam_node/credentials.h).
 // Do not hardcode or commit Wi-Fi credentials here.
 
-// --- 2. EMQX Cloud Settings (Port 8883 Native TLS) ---
-#define MQTT_BROKER_HOST        "wfc1ec11.ala.asia-southeast1.emqxsl.com"
+// --- 2. EMQX Cloud Settings (Port 8883 Native TLS & Port 8084 WSS) ---
+#define MQTT_BROKER_HOST        "q2277711.ala.asia-southeast1.emqxsl.com"
 #define MQTT_TLS_PORT           8883
+#define MQTT_WS_PORT            8084
+#define MQTT_DEFAULT_USER       "agrapatha"
+#define MQTT_DEFAULT_PASS       "agrapatha123"
 // NOTE: MQTT authentication credentials (SECRET_MQTT_USERNAME & SECRET_MQTT_PASSWORD)
 // must be supplied via sketch-local credentials.h. Do not commit credentials here.
 

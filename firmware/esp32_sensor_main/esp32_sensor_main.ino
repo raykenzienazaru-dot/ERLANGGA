@@ -77,6 +77,20 @@
 // ======================================================
 #if __has_include("credentials.h")
   #include "credentials.h"
+  #ifdef SECRET_WIFI_SSID
+    const char* WIFI_SSID     = SECRET_WIFI_SSID;
+    const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+  #else
+    const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+    const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+  #endif
+  #ifdef SECRET_MQTT_USERNAME
+    const char* MQTT_USER     = SECRET_MQTT_USERNAME;
+    const char* MQTT_PASS     = SECRET_MQTT_PASSWORD;
+  #else
+    const char* MQTT_USER     = "agrapatha";
+    const char* MQTT_PASS     = "agrapatha123";
+  #endif
 #else
   const char* WIFI_SSID     = "YOUR_WIFI_SSID";
   const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";

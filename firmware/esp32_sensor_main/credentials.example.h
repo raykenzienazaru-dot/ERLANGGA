@@ -20,8 +20,8 @@
 
 #define SECRET_WIFI_SSID        "YOUR_WIFI_SSID"
 #define SECRET_WIFI_PASSWORD    "YOUR_WIFI_PASSWORD"
-#define SECRET_MQTT_USERNAME    "YOUR_MQTT_USERNAME"
-#define SECRET_MQTT_PASSWORD    "YOUR_MQTT_PASSWORD"
+#define SECRET_MQTT_USERNAME    "agrapatha"
+#define SECRET_MQTT_PASSWORD    "agrapatha123"
 
 /**
  * Root CA Certificate (PEM format) for EMQX Cloud TLS validation on Port 8883.

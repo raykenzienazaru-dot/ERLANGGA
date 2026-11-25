@@ -74,10 +74,10 @@ When an ESP32-CAM hardware stream is unavailable or unverified, the browser-base
 
 ## 4. Hardware Telemetry & EMQX MQTT Infrastructure
 
-- **EMQX Broker Host:** `wfc1ec11.ala.asia-southeast1.emqxsl.com` (EMQX Cloud Serverless Cluster)
+- **EMQX Broker Host:** `q2277711.ala.asia-southeast1.emqxsl.com` (EMQX Cloud Serverless Cluster)
 - **Port Adaptation:**
-  - **Browser Dashboard (WSS):** Port `8084` (`wss://wfc1ec11.ala.asia-southeast1.emqxsl.com:8084/mqtt`). Web browsers cannot establish direct TCP connections to port 8883 due to sandbox restrictions, so WebSocket over TLS/SSL is required.
-  - **ESP32 Hardware & Node.js CLI (Native TLS):** Port `8883` (`mqtts://wfc1ec11.ala.asia-southeast1.emqxsl.com:8883`). Microcontrollers use native TCP with TLS encryption (configured via `firmware/esp32_emqx_config.h`).
+  - **Browser Dashboard (WSS):** Port `8084` (`wss://q2277711.ala.asia-southeast1.emqxsl.com:8084/mqtt`). Web browsers cannot establish direct TCP connections to port 8883 due to sandbox restrictions, so WebSocket over TLS/SSL is required.
+  - **ESP32 Hardware & Node.js CLI (Native TLS):** Port `8883` (`mqtts://q2277711.ala.asia-southeast1.emqxsl.com:8883`). Microcontrollers use native TCP with TLS encryption (configured via `firmware/esp32_emqx_config.h`).
 - **Topic Namespaces:**
   - Telemetry Stream: `agrapatha/telemetry` (JSON sensor payload)
   - Interlock & Carriage Commands: `agrapatha/commands`
@@ -96,10 +96,10 @@ Proyek ini menggunakan arsitektur **Single Source of Truth (`src/config/iotConfi
 
 | Parameter | Default (Out-of-the-Box) | Deskripsi |
 | :--- | :--- | :--- |
-| `Broker Host` | `wfc1ec11.ala.asia-southeast1.emqxsl.com` | Host EMQX Cloud Serverless |
+| `Broker Host` | `q2277711.ala.asia-southeast1.emqxsl.com` | Host EMQX Cloud Serverless |
 | `Browser Port (WSS)` | `8084` | Port WebSocket aman untuk Web Dashboard |
 | `Hardware Port (TLS)` | `8883` | Port MQTTS TCP aman untuk ESP32 |
-| `Username / Password` | `YOUR_MQTT_USERNAME` / `YOUR_MQTT_PASSWORD` | Kredensial autentikasi EMQX Cloud (dikonfigurasi via environment / sketch header) |
+| `Username / Password` | `agrapatha` / `agrapatha123` | Kredensial autentikasi EMQX Cloud |
 | `Wildfire API URL` | `https://tes-tflite-production.up.railway.app` | Backend FastAPI MobileNetV2 |
 | `Topic Telemetry` | `agrapatha/telemetry` & `grenvis/sensor/data` | Topik stream data sensor |
 | `Topic Control` | `agrapatha/commands` & `grenvis/device/control` | Topik kendali motor rel & trigger foto |
