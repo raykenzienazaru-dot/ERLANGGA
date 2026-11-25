@@ -99,7 +99,7 @@ const LiveClockBadge: React.FC<{ isGlassy: boolean }> = React.memo(({ isGlassy }
 
   return (
     <span
-      className={`hidden sm:inline-block px-3 py-1.5 rounded-xl border text-xs font-medium text-[#F1D2A1] font-tabular shadow-xs transition-all duration-300 hover:-translate-y-0.5 hover:shadow-sm cursor-default select-none ${isGlassy
+      className={`hidden md:inline-block px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-medium text-[#F1D2A1] font-tabular shadow-xs transition-all duration-300 hover:-translate-y-0.5 hover:shadow-sm cursor-default select-none shrink-0 ${isGlassy
           ? 'bg-[#5E682B]/85 backdrop-blur-md border-[#869440]'
           : 'bg-[#5E682B] border-[#869440]'
         }`}
@@ -1282,10 +1282,10 @@ export const App: React.FC = () => {
         <div className="h-0.5 w-full animate-nav-shimmer shadow-[0_1px_8px_rgba(241,210,161,0.6)] shrink-0" />
 
         {/* Tier 1: Main Top Navbar Row */}
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-2.5">
-          <div className="flex items-center justify-between gap-3">
+        <div className="w-full max-w-360 xl:max-w-[1560px] 2xl:max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-7 xl:px-8 2xl:px-9 py-2 sm:py-2.5">
+          <div className="flex items-center justify-between gap-2 sm:gap-3 w-full">
             {/* Left: Mobile Toggle & Brand */}
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(true)}
@@ -1297,11 +1297,11 @@ export const App: React.FC = () => {
               </button>
 
               <div
-                className="flex items-center gap-2.5 group cursor-pointer"
+                className="flex items-center gap-2 sm:gap-2.5 group cursor-pointer shrink-0"
                 onClick={() => scrollToSection('overview')}
                 title="Kembali ke Ringkasan AGRAPATHA"
               >
-                <div className="w-9 h-9 rounded-xl bg-[#5E682B] border border-[#869440] flex items-center justify-center shadow-xs shrink-0 transition-all duration-300 group-hover:scale-105 group-hover:shadow-[0_0_10px_rgba(241,210,161,0.4)] p-1 overflow-hidden">
+                <div className="w-8.5 h-8.5 sm:w-9 sm:h-9 rounded-xl bg-[#5E682B] border border-[#869440] flex items-center justify-center shadow-xs shrink-0 transition-all duration-300 group-hover:scale-105 group-hover:shadow-[0_0_10px_rgba(241,210,161,0.4)] p-1 overflow-hidden">
                   <img
                     src="/agrapatha-logo.png"
                     alt="Logo AGRAPATHA"
@@ -1312,7 +1312,7 @@ export const App: React.FC = () => {
                   <span className="text-xs sm:text-sm font-bold text-white tracking-wider uppercase block font-display truncate transition-colors duration-200 group-hover:text-[#F1D2A1]">
                     AGRAPATHA
                   </span>
-                  <span className="text-[10px] text-[#F1D2A1]/90 font-medium block truncate">
+                  <span className="text-[10px] text-[#F1D2A1]/90 font-medium block truncate max-w-[120px] sm:max-w-none">
                     Edge AI Forest &amp; Botanical
                   </span>
                 </div>
@@ -1320,9 +1320,12 @@ export const App: React.FC = () => {
             </div>
 
             {/* Middle: Primary Views & Models Tabs/Dropdown (Desktop) */}
-            <nav aria-label="Primary Views & Models" className="hidden lg:flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#F1D2A1]/80 mr-1 shrink-0">
+            <nav aria-label="Primary Views & Models" className="hidden lg:flex items-center gap-1.5 xl:gap-2 shrink-0">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#F1D2A1]/80 mr-1 shrink-0 hidden 2xl:inline-block">
                 Primary Views &amp; Models
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#F1D2A1]/80 mr-1 shrink-0 hidden xl:inline-block 2xl:hidden">
+                Views &amp; Models
               </span>
 
               {/* NavigationMenu for Dashboard 1 Options */}
@@ -1330,7 +1333,7 @@ export const App: React.FC = () => {
                 <NavigationMenuList>
                   <NavigationMenuItem>
                     <NavigationMenuTrigger
-                      className="h-9 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#FAF9F5] hover:text-[#263A35] hover:border-[#DCE4E1] hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm focus:bg-[#FAF9F5] focus:text-[#263A35] data-[active]:bg-[#FAF9F5] data-[active]:text-[#263A35] data-[state=open]:bg-[#FAF9F5] data-[state=open]:text-[#263A35] data-[state=open]:border-[#DCE4E1] data-[state=open]:shadow-md backdrop-blur-md"
+                      className="h-8.5 sm:h-9 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#FAF9F5] hover:text-[#263A35] hover:border-[#DCE4E1] hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm focus:bg-[#FAF9F5] focus:text-[#263A35] data-[active]:bg-[#FAF9F5] data-[active]:text-[#263A35] data-[state=open]:bg-[#FAF9F5] data-[state=open]:text-[#263A35] data-[state=open]:border-[#DCE4E1] data-[state=open]:shadow-md backdrop-blur-md shrink-0"
                     >
                       <LayoutGrid size={14} className="shrink-0 mr-1.5 text-current transition-colors" />
                       <span>Dashboard 1</span>
@@ -1432,7 +1435,7 @@ export const App: React.FC = () => {
                   {/* Anak Bar: Navigation Menu Item for Section Quick Links */}
                   <NavigationMenuItem>
                     <NavigationMenuTrigger
-                      className="h-9 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#FAF9F5] hover:text-[#263A35] hover:border-[#DCE4E1] hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm focus:bg-[#FAF9F5] focus:text-[#263A35] data-[active]:bg-[#FAF9F5] data-[active]:text-[#263A35] data-[state=open]:bg-[#FAF9F5] data-[state=open]:text-[#263A35] data-[state=open]:border-[#DCE4E1] data-[state=open]:shadow-md backdrop-blur-md"
+                      className="h-8.5 sm:h-9 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#FAF9F5] hover:text-[#263A35] hover:border-[#DCE4E1] hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm focus:bg-[#FAF9F5] focus:text-[#263A35] data-[active]:bg-[#FAF9F5] data-[active]:text-[#263A35] data-[state=open]:bg-[#FAF9F5] data-[state=open]:text-[#263A35] data-[state=open]:border-[#DCE4E1] data-[state=open]:shadow-md backdrop-blur-md shrink-0"
                     >
                       <span className="w-1.5 h-1.5 rounded-full mr-1.5 transition-colors bg-[#F1D2A1] group-hover:bg-[#737F35] group-focus:bg-[#737F35] group-data-[state=open]:bg-[#737F35] shadow-[0_0_6px_currentColor]" />
                       <span>Anak Bar Seksi</span>
@@ -1441,7 +1444,7 @@ export const App: React.FC = () => {
                       </span>
                     </NavigationMenuTrigger>
 
-                    <NavigationMenuContent className="p-3.5 w-[420px] sm:w-[520px] md:w-[600px]">
+                    <NavigationMenuContent className="p-3.5 w-[calc(100vw-2rem)] max-w-[600px] sm:w-[520px] md:w-[600px]">
                       <div className="mb-2.5 px-1.5 pb-2 border-b border-[#E2E8E5] flex items-center justify-between">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-[#56612E] flex items-center gap-1.5 font-mono">
                           <span className="w-1.5 h-1.5 rounded-full bg-[#737F35] shadow-[0_0_6px_rgba(115,127,53,0.6)]" />
@@ -1485,9 +1488,9 @@ export const App: React.FC = () => {
             </nav>
 
             {/* Right: Edge Kernel Channel + Connectivity + 3D Welcome + Clock */}
-            <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-              {/* Edge Kernel Channel */}
-              <div className="hidden lg:flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-[#5E682B] border border-[#869440] shrink-0 transition-transform duration-200 hover:-translate-y-0.5 shadow-xs hover:shadow-sm">
+            <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+              {/* Edge Kernel Channel - collapses to hidden on tighter desktop viewports (lg) to prevent overflow */}
+              <div className="hidden xl:flex items-center gap-2 px-2.5 xl:px-3 py-1.5 rounded-xl bg-[#5E682B] border border-[#869440] shrink-0 transition-transform duration-200 hover:-translate-y-0.5 shadow-xs hover:shadow-sm">
                 <span className="w-2 h-2 rounded-full shrink-0 bg-[#F1D2A1] shadow-[0_0_6px_rgba(241,210,161,0.8)] animate-pulse" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
@@ -1498,7 +1501,7 @@ export const App: React.FC = () => {
                       100 Trees
                     </span>
                   </div>
-                  <span className="text-[9px] text-[#F1D2A1]/80 font-medium block truncate max-w-[130px] xl:max-w-[160px]">
+                  <span className="text-[9px] text-[#F1D2A1]/80 font-medium block truncate max-w-[120px] 2xl:max-w-[160px]">
                     model_hazard.h + grenvis_sensor
                   </span>
                 </div>
@@ -1514,7 +1517,7 @@ export const App: React.FC = () => {
                 );
                 return (
                   <div
-                    className={`flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm backdrop-blur-md ${deviceConn.isOnline
+                    className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-2.5 lg:px-3 py-1.5 rounded-xl border text-xs shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm backdrop-blur-md shrink-0 ${deviceConn.isOnline
                         ? 'bg-[#5E682B] border-[#869440] text-white'
                         : isTelemetryStale
                           ? 'bg-[#5E682B] border-[#D97706]/70 text-[#D97706]'
@@ -1527,7 +1530,7 @@ export const App: React.FC = () => {
                     <span className="font-bold font-display text-[11px] uppercase tracking-wider text-white">
                       {deviceConn.text}
                     </span>
-                    <span className="text-[11px] text-[#F1D2A1]/80 font-tabular border-l border-[#869440] pl-2 hidden sm:inline-block">
+                    <span className="text-[11px] text-[#F1D2A1]/80 font-tabular border-l border-[#869440] pl-2 hidden md:inline-block">
                       {isLiveTelemetry && !isTelemetryStale && lastLiveTelemetryTime
                         ? lastLiveTelemetryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                         : 'SSE'}
@@ -1539,7 +1542,7 @@ export const App: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setViewMode('boot')}
-                className="group px-2.5 sm:px-3 py-1.5 rounded-xl text-[#F1D2A1] hover:bg-[#525B25] hover:text-white border border-[#869440] bg-[#5E682B] text-xs font-bold transition-all duration-200 cursor-pointer flex items-center gap-1.5 shadow-xs hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 active:scale-95 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#F1D2A1]"
+                className="group px-2.5 sm:px-3 py-1.5 rounded-xl text-[#F1D2A1] hover:bg-[#525B25] hover:text-white border border-[#869440] bg-[#5E682B] text-xs font-bold transition-all duration-200 cursor-pointer flex items-center gap-1.5 shadow-xs hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 active:scale-95 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#F1D2A1] shrink-0"
                 title="Buka tampilan 3D Welcome Screen"
                 aria-label="Buka kembali tampilan 3D Welcome Screen"
               >
