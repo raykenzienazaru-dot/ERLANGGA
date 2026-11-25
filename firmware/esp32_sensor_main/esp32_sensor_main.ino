@@ -73,20 +73,24 @@
 #define I2C_SCL_PIN          22
 
 // ======================================================
-// 2. KREDENSIAL JARINGAN & MQTT
+// 2. KREDENSIAL JARINGAN & MQTT EMQX CLOUD
 // ======================================================
 #if __has_include("credentials.h")
   #include "credentials.h"
 #else
   const char* WIFI_SSID     = "YOUR_WIFI_SSID";
   const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-  const char* MQTT_USER     = "YOUR_MQTT_USERNAME";
-  const char* MQTT_PASS     = "YOUR_MQTT_PASSWORD";
+  const char* MQTT_USER     = "agrapatha";
+  const char* MQTT_PASS     = "agrapatha123";
 #endif
 
-// EMQX Cloud TLS Broker (Port 8883)
-const char* MQTT_HOST       = "wfc1ec11.ala.asia-southeast1.emqxsl.com";
+// EMQX Cloud TLS Broker Connection Information
+// Address              : q2277711.ala.asia-southeast1.emqxsl.com
+// MQTT over TLS/SSL    : Port 8883 (Digunakan ESP32 via WiFiClientSecure)
+// WebSocket over TLS   : Port 8084 (Digunakan Browser Dashboard: wss://...:8084/mqtt)
+const char* MQTT_HOST       = "q2277711.ala.asia-southeast1.emqxsl.com";
 const uint16_t MQTT_PORT    = 8883;
+const uint16_t MQTT_WS_PORT = 8084;
 
 const char* TOPIC_TELEMETRY = "agrapatha/telemetry";
 const char* TOPIC_COMMANDS  = "agrapatha/commands"; // Jalur Menerima Perintah dari Dashboard
@@ -599,6 +603,8 @@ void setup() {
 
   secureClient.setInsecure();
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  mqttClient.setBufferSize(1024); // Alokasi buffer 1024 bytes agar payload JSON lengkap tidak terpotong
+  mqttClient.setKeepAlive(60);
   mqttClient.setCallback(onMqttMessage);
 
   currentState = STATE_HOMING;
@@ -726,8 +732,12 @@ void loop() {
     lastMqttPubTime = now;
     if (!mqttClient.connected()) {
       if (WiFi.status() == WL_CONNECTED) {
-        if (mqttClient.connect("AgrapathaMainESP32", MQTT_USER, MQTT_PASS)) {
+        String clientId = "AgrapathaMainESP32-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+        if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
+          Serial.println("[MQTT] Terhubung ke EMQX Cloud TLS Broker (Port 8883)!");
           mqttClient.subscribe(TOPIC_COMMANDS);
+        } else {
+          Serial.printf("[MQTT] Gagal terhubung ke broker, rc=%d\n", mqttClient.state());
         }
       }
     } else {
@@ -740,6 +750,8 @@ void loop() {
         "\"humidity\":%.2f,"
         "\"soil_moisture\":%.2f,"
         "\"gas_raw\":%d,"
+        "\"mq135_raw\":%d,"
+        "\"flame_detected\":%d,"
         "\"flame_ch\":[%d,%d,%d,%d,%d],"
         "\"distance_mm\":%u,"
         "\"zone\":%d,"
@@ -751,6 +763,8 @@ void loop() {
         "\"command_payload\":%s"
         "}",
         currentTemp, currentHumidity, soilMoisturePct, rawMQ135,
+        rawMQ135,
+        (activeFlameCount > 0 ? 1 : 0),
         flameCh[0], flameCh[1], flameCh[2], flameCh[3], flameCh[4],
         targetDistanceMm, currentZone, pumpActive ? "true" : "false",
         pumpLockout ? "true" : "false",

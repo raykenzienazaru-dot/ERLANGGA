@@ -20,11 +20,11 @@ function getArg(flag, fallback) {
   return fallback;
 }
 
-const HOST = getArg('--host', process.env.MQTT_HOST || process.env.VITE_MQTT_HOST || 'wfc1ec11.ala.asia-southeast1.emqxsl.com');
+const HOST = getArg('--host', process.env.MQTT_HOST || process.env.VITE_MQTT_HOST || 'q2277711.ala.asia-southeast1.emqxsl.com');
 const TLS_PORT = parseInt(getArg('--tls-port', process.env.MQTT_PORT || process.env.VITE_MQTT_TCP_PORT || '8883'), 10);
 const WS_PORT = parseInt(getArg('--ws-port', process.env.MQTT_WS_PORT || process.env.VITE_MQTT_WS_PORT || '8084'), 10);
-const USERNAME = getArg('--username', process.env.MQTT_USERNAME || '');
-const PASSWORD = getArg('--password', process.env.MQTT_PASSWORD || '');
+const USERNAME = getArg('--username', process.env.MQTT_USERNAME || process.env.VITE_MQTT_USERNAME || 'agrapatha');
+const PASSWORD = getArg('--password', process.env.MQTT_PASSWORD || process.env.VITE_MQTT_PASSWORD || 'agrapatha123');
 
 if (args.includes('--username') || args.includes('--password')) {
   console.warn('SECURITY WARNING: Passing credentials via command-line flags (--username, --password)');
