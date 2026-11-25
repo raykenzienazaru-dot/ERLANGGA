@@ -1330,9 +1330,9 @@ export const App: React.FC = () => {
                 <NavigationMenuList>
                   <NavigationMenuItem>
                     <NavigationMenuTrigger
-                      className="h-9 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#525B25] hover:text-white hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm data-[state=open]:bg-[#2C2922] data-[state=open]:text-[#F1D2A1] data-[state=open]:border-[#2C2922] backdrop-blur-md"
+                      className="h-9 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#FAF9F5] hover:text-[#263A35] hover:border-[#DCE4E1] hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm focus:bg-[#FAF9F5] focus:text-[#263A35] data-[active]:bg-[#FAF9F5] data-[active]:text-[#263A35] data-[state=open]:bg-[#FAF9F5] data-[state=open]:text-[#263A35] data-[state=open]:border-[#DCE4E1] data-[state=open]:shadow-md backdrop-blur-md"
                     >
-                      <LayoutGrid size={14} className="shrink-0 mr-1.5 text-current" />
+                      <LayoutGrid size={14} className="shrink-0 mr-1.5 text-current transition-colors" />
                       <span>Dashboard 1</span>
                       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase font-mono ml-1.5 mr-0.5 bg-[#EAD39D] text-[#2C2922] border border-[#D6BC7C]">
                         {currentTab === 'model_hazard'
@@ -1432,9 +1432,9 @@ export const App: React.FC = () => {
                   {/* Anak Bar: Navigation Menu Item for Section Quick Links */}
                   <NavigationMenuItem>
                     <NavigationMenuTrigger
-                      className="h-9 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#525B25] hover:text-white hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm data-[state=open]:bg-[#2C2922] data-[state=open]:text-[#F1D2A1] data-[state=open]:border-[#2C2922] backdrop-blur-md"
+                      className="h-9 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border bg-[#5E682B] text-[#F1D2A1] border-[#869440] hover:bg-[#FAF9F5] hover:text-[#263A35] hover:border-[#DCE4E1] hover:-translate-y-0.5 active:translate-y-0 hover:shadow-sm focus:bg-[#FAF9F5] focus:text-[#263A35] data-[active]:bg-[#FAF9F5] data-[active]:text-[#263A35] data-[state=open]:bg-[#FAF9F5] data-[state=open]:text-[#263A35] data-[state=open]:border-[#DCE4E1] data-[state=open]:shadow-md backdrop-blur-md"
                     >
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#F1D2A1] mr-1.5 shadow-[0_0_6px_#F1D2A1]" />
+                      <span className="w-1.5 h-1.5 rounded-full mr-1.5 transition-colors bg-[#F1D2A1] group-hover:bg-[#737F35] group-focus:bg-[#737F35] group-data-[state=open]:bg-[#737F35] shadow-[0_0_6px_currentColor]" />
                       <span>Anak Bar Seksi</span>
                       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase bg-[#EAD39D] text-[#2C2922] border border-[#D6BC7C] font-mono ml-1.5 mr-0.5">
                         {navItems.length} SEKSI
