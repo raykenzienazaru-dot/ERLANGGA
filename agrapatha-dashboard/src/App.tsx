@@ -2550,24 +2550,24 @@ export const App: React.FC = () => {
                         type="button"
                         onClick={() => handleDomainChange('wildfire')}
                         className={`text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${visionDomain === 'wildfire'
-                            ? 'bg-[#4E635E] text-white shadow-xs'
-                            : 'text-[#263A35] hover:text-[#4E635E]'
+                            ? 'bg-[#737F35] text-white shadow-xs'
+                            : 'text-[#263A35] hover:text-[#737F35]'
                           }`}
                         aria-pressed={visionDomain === 'wildfire'}
                       >
-                        <Flame size={12} />
+                        <Flame size={12} className={visionDomain === 'wildfire' ? 'text-[#F1D2A1]' : ''} />
                         <span>Karhutla (Wildfire)</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => handleDomainChange('leaf_disease')}
                         className={`text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${visionDomain === 'leaf_disease'
-                            ? 'bg-[#4E635E] text-white shadow-xs'
-                            : 'text-[#263A35] hover:text-[#4E635E]'
+                            ? 'bg-[#737F35] text-white shadow-xs'
+                            : 'text-[#263A35] hover:text-[#737F35]'
                           }`}
                         aria-pressed={visionDomain === 'leaf_disease'}
                       >
-                        <Leaf size={12} />
+                        <Leaf size={12} className={visionDomain === 'leaf_disease' ? 'text-[#F1D2A1]' : ''} />
                         <span>Penyakit Daun</span>
                       </button>
                     </div>
@@ -2580,7 +2580,7 @@ export const App: React.FC = () => {
                               ? 'bg-[#22C55E] animate-pulse'
                               : 'bg-[#EAB308] animate-pulse'
                             : cameraStatus === 'captured'
-                              ? 'bg-[#4E635E]'
+                              ? 'bg-[#737F35]'
                               : cameraStatus === 'permission_denied' || cameraStatus === 'device_error'
                                 ? 'bg-[#EF4444]'
                                 : 'bg-[#9CA3AF]'
@@ -2612,7 +2612,7 @@ export const App: React.FC = () => {
                           type="button"
                           onClick={handleCaptureFromVideo}
                           disabled={!isVideoReady}
-                          className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E] disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#737F35] hover:bg-[#5E682B] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#737F35] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Camera size={13} />
                           <span>{isVideoReady ? 'Ambil Foto Frame' : 'Menyiapkan Kamera...'}</span>
@@ -2631,7 +2631,7 @@ export const App: React.FC = () => {
                         <button
                           type="button"
                           onClick={handleStartCamera}
-                          className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#4E635E]"
+                          className="text-xs font-semibold px-3.5 py-1.5 rounded-full bg-[#737F35] hover:bg-[#5E682B] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#737F35]"
                         >
                           <Video size={13} />
                           <span>Buka Kamera Laptop/HP</span>
@@ -2682,7 +2682,7 @@ export const App: React.FC = () => {
                       onClick={handleAnalyzeImage}
                       disabled={!capturedBlob || isCapturing}
                       aria-busy={isCapturing}
-                      className="text-xs font-semibold px-4 py-1.5 rounded-full bg-[#263A35] hover:bg-[#1A2522] text-[#E2E0CB] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#263A35]"
+                      className="text-xs font-semibold px-4 py-1.5 rounded-full bg-[#737F35] hover:bg-[#5E682B] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[#737F35]"
                     >
                       {isCapturing ? (
                         <>
@@ -2691,7 +2691,7 @@ export const App: React.FC = () => {
                         </>
                       ) : (
                         <>
-                          <Sparkles size={13} className="text-[#5DD62C]" />
+                          <Sparkles size={13} className="text-[#F1D2A1]" />
                           <span>
                             {visionDomain === 'wildfire' ? 'Analisis Karhutla (Railway API)' : 'Diagnosa Penyakit Daun'}
                           </span>
@@ -2715,7 +2715,9 @@ export const App: React.FC = () => {
                 {/* Main 2-Column Content Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
                   {/* Left: Video / Image Viewport */}
-                  <div className="lg:col-span-2 relative min-h-85 xl:min-h-95 bg-[#1A2522] border border-[#D6DCCE] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-xs">
+                  <div className="lg:col-span-2 relative min-h-85 xl:min-h-95 bg-[#737F35] border border-[#5E682B] rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center shadow-md">
+                    {/* Glassmorphic Ambient Highlight */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-white/[0.08] via-transparent to-black/[0.12] pointer-events-none" />
                     {cameraStatus === 'streaming' ? (
                       <>
                         <video
@@ -2748,7 +2750,7 @@ export const App: React.FC = () => {
                           className="w-full h-full object-cover absolute inset-0"
                         />
                         {/* Live Stream Top HUD */}
-                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-mono border border-[#364844] flex items-center gap-1.5 shadow-xs">
+                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#869440] flex items-center gap-1.5 shadow-xs">
                           <span className={`w-2 h-2 rounded-full ${isVideoReady ? 'bg-[#22C55E] animate-ping' : 'bg-[#EAB308]'}`} />
                           <span>{isVideoReady ? 'LIVE DEVICE CAMERA · MEDIASTREAM' : 'MEMUAT FEED KAMERA...'}</span>
                         </div>
@@ -2761,8 +2763,8 @@ export const App: React.FC = () => {
                           className="w-full h-full object-cover absolute inset-0"
                         />
                         {/* Captured Frame HUD */}
-                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-mono border border-[#364844] flex items-center gap-1.5 shadow-xs">
-                          <CheckCircle2 size={12} className="text-[#5DD62C]" />
+                        <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#869440] flex items-center gap-1.5 shadow-xs">
+                          <CheckCircle2 size={12} className="text-[#F1D2A1]" />
                           <span>
                             {captureSource === 'camera'
                               ? 'FRAME FOTO KAMERA'
@@ -2775,16 +2777,16 @@ export const App: React.FC = () => {
                     ) : (
                       <>
                         <div className="relative z-10 p-6 max-w-sm flex flex-col items-center gap-3">
-                          <div className="w-12 h-12 rounded-2xl bg-[#23312E]/90 border border-[#364844] flex items-center justify-center text-[#5DD62C] shadow-md">
+                          <div className="w-12 h-12 rounded-2xl bg-[#5E682B] border border-[#869440] flex items-center justify-center text-[#F1D2A1] shadow-md">
                             <Camera size={24} />
                           </div>
                           <div>
-                            <h3 className="text-sm font-bold text-[#F4F7F5]">
+                            <h3 className="text-sm font-bold text-white font-display">
                               {visionDomain === 'wildfire'
                                 ? 'Kamera Pemantau Kanopi Hutan'
                                 : 'Kamera Diagnosa Patologi Daun'}
                             </h3>
-                            <p className="text-xs text-[#A6B49E] mt-1 leading-relaxed">
+                            <p className="text-xs text-[#F1D2A1]/90 mt-1 leading-relaxed">
                               Buka kamera laptop/smartphone, muat frame dari gateway ESP32-CAM, atau unggah file foto untuk verifikasi visual langsung ke model AI.
                             </p>
                           </div>
@@ -2792,7 +2794,7 @@ export const App: React.FC = () => {
                             <button
                               type="button"
                               onClick={handleStartCamera}
-                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#4E635E] hover:bg-[#3B4D49] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#5E682B] hover:bg-[#525B25] text-white border border-[#869440] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                             >
                               <Video size={13} />
                               <span>Buka Kamera</span>
@@ -2801,12 +2803,12 @@ export const App: React.FC = () => {
                               type="button"
                               onClick={() => handleFetchGatewayFrame(true)}
                               disabled={isFetchingGatewayFrame}
-                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white hover:bg-[#EFF3EF] text-[#263A35] border border-[#D6DCCE] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white hover:bg-[#FAF9F5] text-[#263A35] border border-[#DCE4E1] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
                             >
                               <Camera size={13} />
                               <span>Frame Gateway</span>
                             </button>
-                            <label className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#23312E] hover:bg-[#2C3B37] text-[#E2E0CB] border border-[#364844] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
+                            <label className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#5E682B] hover:bg-[#525B25] text-white border border-[#869440] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs">
                               <Upload size={13} />
                               <span>Unggah Foto</span>
                               <input
@@ -2823,7 +2825,7 @@ export const App: React.FC = () => {
 
                     {/* Bottom Viewport Overlay Telemetry */}
                     <div className="absolute inset-x-3 bottom-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 z-10 pointer-events-none">
-                      <div className="px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[10px] font-medium backdrop-blur-sm border border-[#364844] shadow-xs max-w-full truncate">
+                      <div className="px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-medium backdrop-blur-sm border border-[#869440] shadow-xs max-w-full truncate">
                         {visionDomain === 'wildfire'
                           ? `Mode: Karhutla · Rel: ${railPositionMm} mm · Source: ${captureSource === 'camera' ? 'Webcam' : captureSource === 'upload' ? 'Upload' : captureSource === 'gateway' ? 'Gateway ESP32-CAM' : 'Standby'}`
                           : `Mode: Diagnosa Daun · Status Layanan: ${isLeafDiseaseApiConfigured() ? 'Tersambung' : 'Belum Dideploy'}`}
@@ -2833,35 +2835,35 @@ export const App: React.FC = () => {
                         {visionDomain === 'wildfire' ? (
                           wildfireResult ? (
                             <>
-                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                                 <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
                                 Healthy: {visionProbs.healthy.toFixed(1)}%
                               </span>
-                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                                 <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#FB923C]" />
                                 Smoke: {visionProbs.smoke.toFixed(1)}%
                               </span>
-                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                              <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                                 <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#F87171]" />
                                 Fire: {visionProbs.fire.toFixed(1)}%
                               </span>
                             </>
                           ) : (
-                            <span className="px-2.5 py-1 rounded-lg bg-[#23312E]/90 text-[#A6B49E] text-[10px] font-mono border border-[#364844] shadow-xs">
+                            <span className="px-2.5 py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[10px] font-mono border border-[#869440] shadow-xs">
                               {edgePrediction ? `Edge AI: ${edgePrediction}${edgeConfidence !== null ? ` (${(edgeConfidence * 100).toFixed(0)}%)` : ''} · Cloud: Standby` : 'Inferensi Cloud Siap'}
                             </span>
                           )
                         ) : (
                           <>
-                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                               <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#A6B49E]" />
                               Healthy: {leafProbs.healthy.toFixed(1)}%
                             </span>
-                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                               <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#EAB308]" />
                               Powdery: {leafProbs.powdery.toFixed(1)}%
                             </span>
-                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#23312E]/90 text-[#E2E0CB] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#364844] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
+                            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#5E682B]/90 text-[#F1D2A1] text-[9px] sm:text-[10px] font-bold backdrop-blur-sm border border-[#869440] flex items-center gap-1.5 shadow-xs whitespace-nowrap">
                               <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#EA580C]" />
                               Rust: {leafProbs.rust.toFixed(1)}%
                             </span>
@@ -2881,12 +2883,12 @@ export const App: React.FC = () => {
                             Waktu Pemindaian Optik
                           </span>
                           {wildfireResult && visionDomain === 'wildfire' && (
-                            <span className="text-[10px] font-mono font-bold text-[#4E635E] bg-[#EFF3EF] px-1.5 py-0.5 rounded border border-[#D6DCCE]">
+                            <span className="text-[10px] font-mono font-bold text-[#737F35] bg-[#EFF3EF] px-1.5 py-0.5 rounded border border-[#D6DCCE]">
                               {wildfireResult.inference_time_ms.toFixed(1)} ms
                             </span>
                           )}
                           {leafResult && visionDomain === 'leaf_disease' && (
-                            <span className="text-[10px] font-mono font-bold text-[#4E635E] bg-[#EFF3EF] px-1.5 py-0.5 rounded border border-[#D6DCCE]">
+                            <span className="text-[10px] font-mono font-bold text-[#737F35] bg-[#EFF3EF] px-1.5 py-0.5 rounded border border-[#D6DCCE]">
                               {leafResult.inference_time_ms.toFixed(1)} ms
                             </span>
                           )}
@@ -2926,11 +2928,11 @@ export const App: React.FC = () => {
                           <span className="text-[10px] font-bold text-[#50645F] uppercase tracking-wider block">
                             Keyakinan (Confidence)
                           </span>
-                          <span className="text-sm font-bold text-[#4E635E] font-tabular block mt-0.5">
+                          <span className="text-sm font-bold text-[#737F35] font-tabular block mt-0.5">
                             {visionDomain === 'wildfire'
                               ? wildfireResult
-                                ? `${wildfireResult.confidence_percentage.toFixed(1)}%`
-                                : '-'
+                              ? `${wildfireResult.confidence_percentage.toFixed(1)}%`
+                              : '-'
                               : leafPrediction
                                 ? `${Math.max(leafProbs.healthy, leafProbs.powdery, leafProbs.rust).toFixed(1)}%`
                                 : '-'}
@@ -2962,13 +2964,13 @@ export const App: React.FC = () => {
                               <div>
                                 <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
                                   <span>Healthy Canopy (Non-Fire)</span>
-                                  <span className="font-tabular text-[#4E635E] font-bold">
+                                  <span className="font-tabular text-[#737F35] font-bold">
                                     {visionProbs.healthy.toFixed(1)}%
                                   </span>
                                 </div>
                                 <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
                                   <div
-                                    className="h-full rounded-full bg-[#4E635E] flora-meter-bar transition-all duration-500"
+                                    className="h-full rounded-full bg-[#737F35] flora-meter-bar transition-all duration-500"
                                     style={{ width: `${Math.min(100, Math.max(0, visionProbs.healthy))}%` }}
                                   />
                                 </div>
@@ -3018,13 +3020,13 @@ export const App: React.FC = () => {
                             <div>
                               <div className="flex justify-between text-xs font-semibold text-[#263A35] mb-1">
                                 <span>Healthy (Daun Sehat)</span>
-                                <span className="font-tabular text-[#4E635E] font-bold">
+                                <span className="font-tabular text-[#737F35] font-bold">
                                   {leafProbs.healthy.toFixed(1)}%
                                 </span>
                               </div>
                               <div className="h-2 rounded-full bg-[#E2E0CB] overflow-hidden">
                                 <div
-                                  className="h-full rounded-full bg-[#4E635E] flora-meter-bar transition-all duration-500"
+                                  className="h-full rounded-full bg-[#737F35] flora-meter-bar transition-all duration-500"
                                   style={{ width: `${Math.min(100, Math.max(0, leafProbs.healthy))}%` }}
                                 />
                               </div>
